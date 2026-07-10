@@ -1,0 +1,42 @@
+{
+  "meta": { "tagKey": "Env", "tagValue": "Env-prod", "profile": "prod", "regions": ["ap-southeast-1"], "accountId": "123456789012", "generatedAt": "2026-07-07T12:00:00.000Z" },
+  "resources": [
+    { "arn": "internet", "service": "internet", "type": "", "id": "internet", "region": "ap-southeast-1", "name": "Internet", "tags": {}, "extra": {}, "pseudo": true },
+    { "arn": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-fe-lb/1", "service": "elasticloadbalancing", "type": "loadbalancer", "id": "app/webshop-fe-lb/1", "region": "ap-southeast-1", "name": "webshop-fe-lb", "vpcId": "vpc-01", "subnetId": "subnet-pub-a", "tags": {}, "extra": {"scheme":"internet-facing"} },
+    { "arn": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-be-lb/2", "service": "elasticloadbalancing", "type": "loadbalancer", "id": "app/webshop-be-lb/2", "region": "ap-southeast-1", "name": "webshop-be-lb", "vpcId": "vpc-01", "tags": {}, "extra": {"scheme":"internal"} },
+    { "arn": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-web1", "service": "ec2", "type": "instance", "id": "i-web1", "region": "ap-southeast-1", "name": "fe-web-1", "vpcId": "vpc-01", "subnetId": "subnet-pub-a", "az": "ap-southeast-1a", "state": "running", "tags": {}, "extra": {"instanceType":"t3.medium"} },
+    { "arn": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-web2", "service": "ec2", "type": "instance", "id": "i-web2", "region": "ap-southeast-1", "name": "fe-web-2", "vpcId": "vpc-01", "subnetId": "subnet-pub-b", "az": "ap-southeast-1b", "state": "running", "tags": {}, "extra": {"instanceType":"t3.medium"} },
+    { "arn": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api1", "service": "ec2", "type": "instance", "id": "i-api1", "region": "ap-southeast-1", "name": "be-api-1", "vpcId": "vpc-01", "subnetId": "subnet-prv-a", "az": "ap-southeast-1a", "state": "running", "tags": {}, "extra": {"instanceType":"t3.large"} },
+    { "arn": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api2", "service": "ec2", "type": "instance", "id": "i-api2", "region": "ap-southeast-1", "name": "be-api-2", "vpcId": "vpc-01", "subnetId": "subnet-prv-b", "az": "ap-southeast-1b", "state": "running", "tags": {}, "extra": {"instanceType":"t3.large"} },
+    { "arn": "arn:aws:rds:ap-southeast-1:123456789012:db:webshop-mysql", "service": "rds", "type": "db", "id": "webshop-mysql", "region": "ap-southeast-1", "name": "webshop-mysql", "vpcId": "vpc-01", "subnetId": "subnet-prv-a", "tags": {}, "extra": {"engine":"mysql","multiAz":true} },
+    { "arn": "arn:aws:elasticache:ap-southeast-1:123456789012:cluster:webshop-redis-001", "service": "elasticache", "type": "cluster", "id": "webshop-redis-001", "region": "ap-southeast-1", "name": "webshop-redis-001", "vpcId": "vpc-01", "subnetId": "subnet-prv-a", "tags": {}, "extra": {"engine":"redis"} },
+    { "arn": "arn:aws:elasticache:ap-southeast-1:123456789012:cluster:webshop-redis-002", "service": "elasticache", "type": "cluster", "id": "webshop-redis-002", "region": "ap-southeast-1", "name": "webshop-redis-002", "vpcId": "vpc-01", "subnetId": "subnet-prv-b", "tags": {}, "extra": {"engine":"redis"} },
+    { "arn": "arn:aws:elasticfilesystem:ap-southeast-1:123456789012:file-system/fs-01", "service": "elasticfilesystem", "type": "file-system", "id": "fs-01", "region": "ap-southeast-1", "name": "webshop-efs", "vpcId": "vpc-01", "subnetId": "subnet-prv-a", "tags": {}, "extra": {} },
+    { "arn": "arn:aws:ec2:ap-southeast-1:123456789012:natgateway/nat-01", "service": "ec2", "type": "natgateway", "id": "nat-01", "region": "ap-southeast-1", "name": "webshop-nat", "vpcId": "vpc-01", "subnetId": "subnet-pub-a", "tags": {}, "extra": {} },
+    { "arn": "arn:aws:ec2:ap-southeast-1:123456789012:internet-gateway/igw-01", "service": "ec2", "type": "internet-gateway", "id": "igw-01", "region": "ap-southeast-1", "name": "webshop-igw", "vpcId": "vpc-01", "tags": {}, "extra": {} },
+    { "arn": "arn:aws:lambda:ap-southeast-1:123456789012:function:webshop-worker", "service": "lambda", "type": "function", "id": "webshop-worker", "region": "ap-southeast-1", "name": "webshop-worker", "vpcId": "vpc-01", "subnetId": "subnet-prv-b", "tags": {}, "extra": {"runtime":"nodejs20.x"} },
+    { "arn": "arn:aws:apigateway:ap-southeast-1::/restapis/abcde", "service": "apigateway", "type": "", "id": "/restapis/abcde", "region": "ap-southeast-1", "name": "webshop-api", "tags": {}, "extra": {} },
+    { "arn": "arn:aws:s3:::webshop-assets", "service": "s3", "type": "", "id": "webshop-assets", "region": "ap-southeast-1", "name": "webshop-assets", "tags": {}, "extra": {} }
+  ],
+  "vpcs": { "vpc-01": { "id": "vpc-01", "region": "ap-southeast-1", "cidr": "10.20.0.0/16", "name": "webshop-vpc" } },
+  "subnets": {
+    "subnet-pub-a": { "id": "subnet-pub-a", "vpcId": "vpc-01", "az": "ap-southeast-1a", "cidr": "10.20.1.0/24", "public": true, "name": "public-a" },
+    "subnet-pub-b": { "id": "subnet-pub-b", "vpcId": "vpc-01", "az": "ap-southeast-1b", "cidr": "10.20.2.0/24", "public": true, "name": "public-b" },
+    "subnet-prv-a": { "id": "subnet-prv-a", "vpcId": "vpc-01", "az": "ap-southeast-1a", "cidr": "10.20.11.0/24", "public": false, "name": "private-a" },
+    "subnet-prv-b": { "id": "subnet-prv-b", "vpcId": "vpc-01", "az": "ap-southeast-1b", "cidr": "10.20.12.0/24", "public": false, "name": "private-b" }
+  },
+  "edges": [
+    { "from": "internet", "to": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-fe-lb/1", "label": "HTTPS", "kind": "internet" },
+    { "from": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-fe-lb/1", "to": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-web1", "label": "HTTPS", "kind": "lb-target" },
+    { "from": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-fe-lb/1", "to": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-web2", "label": "HTTPS", "kind": "lb-target" },
+    { "from": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-be-lb/2", "to": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api1", "label": "HTTP", "kind": "lb-target" },
+    { "from": "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/app/webshop-be-lb/2", "to": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api2", "label": "HTTP", "kind": "lb-target" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-web1", "to": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api1", "label": "HTTP :3000", "kind": "sg-flow" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-web2", "to": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api2", "label": "HTTP :3000", "kind": "sg-flow" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api1", "to": "arn:aws:rds:ap-southeast-1:123456789012:db:webshop-mysql", "label": "MySQL :3306", "kind": "sg-flow" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api2", "to": "arn:aws:rds:ap-southeast-1:123456789012:db:webshop-mysql", "label": "MySQL :3306", "kind": "sg-flow" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api1", "to": "arn:aws:elasticache:ap-southeast-1:123456789012:cluster:webshop-redis-001", "label": "Redis :6379", "kind": "sg-flow" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api2", "to": "arn:aws:elasticache:ap-southeast-1:123456789012:cluster:webshop-redis-002", "label": "Redis :6379", "kind": "sg-flow" },
+    { "from": "arn:aws:ec2:ap-southeast-1:123456789012:instance/i-api1", "to": "arn:aws:elasticfilesystem:ap-southeast-1:123456789012:file-system/fs-01", "label": "NFS :2049", "kind": "sg-flow" }
+  ]
+}

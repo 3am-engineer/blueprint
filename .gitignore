@@ -1,0 +1,10 @@
+node_modules/
+out/
+icons/
+*.tgz
+.DS_Store
+.env
+
+# local scan outputs (real account data — never commit)
+9am/
+mint/

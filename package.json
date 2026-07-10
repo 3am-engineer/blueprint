@@ -1,0 +1,77 @@
+{
+  "name": "3am-blueprint",
+  "version": "1.2.0",
+  "description": "blueprint_ by 3am_ — scan any AWS account and draw an interactive architecture diagram (web UI + CLI, SVG/PNG export) using the official AWS architecture icon set.",
+  "type": "module",
+  "license": "MIT",
+  "author": "3am_ (https://3am.engineer/)",
+  "homepage": "https://github.com/3am-engineer/blueprint#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/3am-engineer/blueprint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/3am-engineer/blueprint/issues"
+  },
+  "keywords": [
+    "blueprint",
+    "aws",
+    "architecture",
+    "diagram",
+    "svg",
+    "tags",
+    "elkjs",
+    "infrastructure",
+    "visualization",
+    "3am"
+  ],
+  "bin": {
+    "blueprint": "bin/blueprint.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/",
+    "public/",
+    "examples/",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/blueprint.js",
+    "demo": "node bin/blueprint.js --from-json examples/sample-scan.json --out out",
+    "test": "node --test",
+    "fetch-icons": "node scripts/fetch-icons.mjs",
+    "fetch-icons:aws": "node scripts/fetch-icons.mjs aws",
+    "fetch-icons:azure": "node scripts/fetch-icons.mjs azure",
+    "fetch-icons:gcp": "node scripts/fetch-icons.mjs gcp",
+    "fetch-icons:oci": "node scripts/fetch-icons.mjs oci",
+    "fetch-icons:all": "node scripts/fetch-icons.mjs all"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@aws-sdk/client-acm": "^3.600.0",
+    "@aws-sdk/client-auto-scaling": "^3.600.0",
+    "@aws-sdk/client-cloudfront": "^3.600.0",
+    "@aws-sdk/client-ec2": "^3.600.0",
+    "@aws-sdk/client-ecs": "^3.1081.0",
+    "@aws-sdk/client-efs": "^3.600.0",
+    "@aws-sdk/client-eks": "^3.1081.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.600.0",
+    "@aws-sdk/client-elasticache": "^3.600.0",
+    "@aws-sdk/client-iam": "^3.600.0",
+    "@aws-sdk/client-lambda": "^3.600.0",
+    "@aws-sdk/client-rds": "^3.600.0",
+    "@aws-sdk/client-resource-groups-tagging-api": "^3.600.0",
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/client-sns": "^3.1081.0",
+    "@aws-sdk/client-sqs": "^3.600.0",
+    "@aws-sdk/client-sts": "^3.600.0",
+    "@aws-sdk/credential-providers": "^3.600.0",
+    "@clack/prompts": "^1.7.0",
+    "elkjs": "^0.9.3",
+    "express": "^4.22.2",
+    "picocolors": "^1.1.1"
+  }
+}

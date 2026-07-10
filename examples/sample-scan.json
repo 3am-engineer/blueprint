@@ -1,0 +1,407 @@
+{
+  "meta": {
+    "tagKey": "Project",
+    "tagValue": "acme",
+    "profile": "prod",
+    "regions": [
+      "us-east-1"
+    ],
+    "accountId": "123456789012",
+    "generatedAt": "2026-07-07T12:00:00.000Z"
+  },
+  "resources": [
+    {
+      "arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/acme-alb/abc123",
+      "service": "elasticloadbalancing",
+      "type": "loadbalancer",
+      "id": "app/acme-alb/abc123",
+      "region": "us-east-1",
+      "name": "acme-alb",
+      "vpcId": "vpc-01",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "scheme": "internet-facing",
+        "lbType": "application"
+      }
+    },
+    {
+      "arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-web1",
+      "service": "ec2",
+      "type": "instance",
+      "id": "i-web1",
+      "region": "us-east-1",
+      "name": "web-1",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-pub-a",
+      "az": "us-east-1a",
+      "state": "running",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "instanceType": "t3.medium",
+        "privateIp": "10.0.1.11"
+      }
+    },
+    {
+      "arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-web2",
+      "service": "ec2",
+      "type": "instance",
+      "id": "i-web2",
+      "region": "us-east-1",
+      "name": "web-2",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-pub-b",
+      "az": "us-east-1b",
+      "state": "running",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "instanceType": "t3.medium",
+        "privateIp": "10.0.2.11"
+      }
+    },
+    {
+      "arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-app1",
+      "service": "ec2",
+      "type": "instance",
+      "id": "i-app1",
+      "region": "us-east-1",
+      "name": "app-1",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-prv-a",
+      "az": "us-east-1a",
+      "state": "running",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "instanceType": "t3.large",
+        "privateIp": "10.0.11.21"
+      }
+    },
+    {
+      "arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-app2",
+      "service": "ec2",
+      "type": "instance",
+      "id": "i-app2",
+      "region": "us-east-1",
+      "name": "app-2",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-prv-b",
+      "az": "us-east-1b",
+      "state": "running",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "instanceType": "t3.large",
+        "privateIp": "10.0.12.21"
+      }
+    },
+    {
+      "arn": "arn:aws:ec2:us-east-1:123456789012:natgateway/nat-01",
+      "service": "ec2",
+      "type": "natgateway",
+      "id": "nat-01",
+      "region": "us-east-1",
+      "name": "acme-nat",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-pub-a",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "arn:aws:rds:us-east-1:123456789012:db:acme-pg",
+      "service": "rds",
+      "type": "db",
+      "id": "acme-pg",
+      "region": "us-east-1",
+      "name": "acme-pg",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-prv-a",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "engine": "postgres",
+        "multiAz": true,
+        "endpoint": "acme-pg.abc.us-east-1.rds.amazonaws.com"
+      }
+    },
+    {
+      "arn": "arn:aws:lambda:us-east-1:123456789012:function:acme-worker",
+      "service": "lambda",
+      "type": "function",
+      "id": "acme-worker",
+      "region": "us-east-1",
+      "name": "acme-worker",
+      "vpcId": "vpc-01",
+      "subnetId": "subnet-prv-b",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "runtime": "nodejs20.x",
+        "memory": 512
+      }
+    },
+    {
+      "arn": "arn:aws:autoscaling:us-east-1:123456789012:autoScalingGroup:uuid:autoScalingGroupName/acme-app-asg",
+      "service": "autoscaling",
+      "type": "autoScalingGroup",
+      "id": "autoScalingGroupName/acme-app-asg",
+      "region": "us-east-1",
+      "name": "acme-app-asg",
+      "vpcId": "vpc-01",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "arn:aws:s3:::acme-assets",
+      "service": "s3",
+      "type": "",
+      "id": "acme-assets",
+      "region": "us-east-1",
+      "name": "acme-assets",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "arn:aws:dynamodb:us-east-1:123456789012:table/acme-sessions",
+      "service": "dynamodb",
+      "type": "table",
+      "id": "acme-sessions",
+      "region": "us-east-1",
+      "name": "acme-sessions",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "arn:aws:sqs:us-east-1:123456789012:acme-jobs",
+      "service": "sqs",
+      "type": "",
+      "id": "acme-jobs",
+      "region": "us-east-1",
+      "name": "acme-jobs",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "arn:aws:sns:us-east-1:123456789012:acme-alerts",
+      "service": "sns",
+      "type": "",
+      "id": "acme-alerts",
+      "region": "us-east-1",
+      "name": "acme-alerts",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "arn:aws:cloudfront::123456789012:distribution/E1NFINITE",
+      "service": "cloudfront",
+      "type": "distribution",
+      "id": "E1NFINITE",
+      "region": "us-east-1",
+      "name": "acme-cdn",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {}
+    },
+    {
+      "arn": "internet",
+      "service": "internet",
+      "type": "",
+      "id": "internet",
+      "region": "us-east-1",
+      "name": "Internet",
+      "tags": {},
+      "extra": {},
+      "pseudo": true
+    },
+    {
+      "arn": "arn:aws:acm:us-east-1:123456789012:certificate/aaaa-bbbb",
+      "service": "acm",
+      "type": "certificate",
+      "id": "aaaa-bbbb",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "name": "acme.io",
+      "tags": {
+        "Project": "acme"
+      },
+      "extra": {
+        "domain": "acme.io",
+        "status": "ISSUED"
+      }
+    }
+  ],
+  "vpcs": {
+    "vpc-01": {
+      "id": "vpc-01",
+      "region": "us-east-1",
+      "cidr": "10.0.0.0/16",
+      "name": "acme-vpc"
+    }
+  },
+  "subnets": {
+    "subnet-pub-a": {
+      "id": "subnet-pub-a",
+      "vpcId": "vpc-01",
+      "az": "us-east-1a",
+      "cidr": "10.0.1.0/24",
+      "public": true,
+      "name": "public-a"
+    },
+    "subnet-pub-b": {
+      "id": "subnet-pub-b",
+      "vpcId": "vpc-01",
+      "az": "us-east-1b",
+      "cidr": "10.0.2.0/24",
+      "public": true,
+      "name": "public-b"
+    },
+    "subnet-prv-a": {
+      "id": "subnet-prv-a",
+      "vpcId": "vpc-01",
+      "az": "us-east-1a",
+      "cidr": "10.0.11.0/24",
+      "public": false,
+      "name": "private-a"
+    },
+    "subnet-prv-b": {
+      "id": "subnet-prv-b",
+      "vpcId": "vpc-01",
+      "az": "us-east-1b",
+      "cidr": "10.0.12.0/24",
+      "public": false,
+      "name": "private-b"
+    }
+  },
+  "edges": [
+    {
+      "from": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/acme-alb/abc123",
+      "to": "arn:aws:ec2:us-east-1:123456789012:instance/i-web1",
+      "label": "HTTP",
+      "kind": "lb-target"
+    },
+    {
+      "from": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/acme-alb/abc123",
+      "to": "arn:aws:ec2:us-east-1:123456789012:instance/i-web2",
+      "label": "HTTP",
+      "kind": "lb-target"
+    },
+    {
+      "from": "arn:aws:autoscaling:us-east-1:123456789012:autoScalingGroup:uuid:autoScalingGroupName/acme-app-asg",
+      "to": "arn:aws:ec2:us-east-1:123456789012:instance/i-app1",
+      "label": "scales",
+      "kind": "asg-member"
+    },
+    {
+      "from": "arn:aws:autoscaling:us-east-1:123456789012:autoScalingGroup:uuid:autoScalingGroupName/acme-app-asg",
+      "to": "arn:aws:ec2:us-east-1:123456789012:instance/i-app2",
+      "label": "scales",
+      "kind": "asg-member"
+    },
+    {
+      "from": "internet",
+      "to": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/acme-alb/abc123",
+      "label": "HTTPS",
+      "kind": "internet"
+    },
+    {
+      "from": "arn:aws:ec2:us-east-1:123456789012:instance/i-web1",
+      "to": "arn:aws:ec2:us-east-1:123456789012:instance/i-app1",
+      "label": "HTTP :8080",
+      "kind": "sg-flow"
+    },
+    {
+      "from": "arn:aws:ec2:us-east-1:123456789012:instance/i-web2",
+      "to": "arn:aws:ec2:us-east-1:123456789012:instance/i-app2",
+      "label": "HTTP :8080",
+      "kind": "sg-flow"
+    },
+    {
+      "from": "arn:aws:ec2:us-east-1:123456789012:instance/i-app1",
+      "to": "arn:aws:rds:us-east-1:123456789012:db:acme-pg",
+      "label": "PostgreSQL :5432",
+      "kind": "sg-flow"
+    },
+    {
+      "from": "arn:aws:ec2:us-east-1:123456789012:instance/i-app2",
+      "to": "arn:aws:rds:us-east-1:123456789012:db:acme-pg",
+      "label": "PostgreSQL :5432",
+      "kind": "sg-flow"
+    },
+    {
+      "from": "arn:aws:lambda:us-east-1:123456789012:function:acme-worker",
+      "to": "arn:aws:rds:us-east-1:123456789012:db:acme-pg",
+      "label": "PostgreSQL :5432",
+      "kind": "sg-flow"
+    },
+    {
+      "from": "arn:aws:sqs:us-east-1:123456789012:acme-jobs",
+      "to": "arn:aws:lambda:us-east-1:123456789012:function:acme-worker",
+      "label": "triggers",
+      "kind": "event"
+    },
+    {
+      "from": "arn:aws:sns:us-east-1:123456789012:acme-alerts",
+      "to": "arn:aws:sqs:us-east-1:123456789012:acme-jobs",
+      "label": "notifies",
+      "kind": "event"
+    },
+    {
+      "from": "internet",
+      "to": "arn:aws:cloudfront::123456789012:distribution/E1NFINITE",
+      "label": "HTTPS",
+      "kind": "internet"
+    },
+    {
+      "from": "arn:aws:cloudfront::123456789012:distribution/E1NFINITE",
+      "to": "arn:aws:s3:::acme-assets",
+      "label": "default (*) \u00b7 /static/*",
+      "kind": "origin"
+    },
+    {
+      "from": "arn:aws:s3:::acme-assets",
+      "to": "arn:aws:lambda:us-east-1:123456789012:function:acme-worker",
+      "label": "ObjectCreated",
+      "kind": "event"
+    },
+    {
+      "from": "arn:aws:acm:us-east-1:123456789012:certificate/aaaa-bbbb",
+      "to": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/acme-alb/abc123",
+      "label": "TLS",
+      "kind": "tls"
+    },
+    {
+      "from": "arn:aws:lambda:us-east-1:123456789012:function:acme-worker",
+      "to": "arn:aws:s3:::acme-assets",
+      "label": "reads",
+      "kind": "iam"
+    },
+    {
+      "from": "arn:aws:ec2:us-east-1:123456789012:instance/i-app1",
+      "to": "arn:aws:dynamodb:us-east-1:123456789012:table/acme-sessions",
+      "label": "read/write",
+      "kind": "iam"
+    }
+  ]
+}
