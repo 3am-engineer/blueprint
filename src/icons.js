@@ -7,6 +7,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveOsIcon } from './os-icons.js';
 
 /** Explicit map: `${service}` or `${service}:${type}` -> icon name candidates.
  *  Candidate strings are matched (normalized) against indexed icon file names. */
@@ -142,7 +143,9 @@ function walk(dir, acc) {
 
 export function loadIconIndex(iconsDir) {
   const files = [];
-  walk(iconsDir, files);
+  // No icon set installed (e.g. CI, or before `blueprint fetch-icons`):
+  // every resolve() falls through to the generic tile below.
+  if (iconsDir && fs.existsSync(iconsDir)) walk(iconsDir, files);
 
   // Bucketed indexes so we can prefer service icons, then resource, then group.
   const service = [], resource = [], group = [];
@@ -194,6 +197,11 @@ export function loadIconIndex(iconsDir) {
         : { dataUri: genericDataUri(), base: 'generic', matched: false };
       cache.set(key, out);
       return out;
+    },
+
+    /** Resolve an OS slug (from AMI detection) to an icon. */
+    resolveOs(slug) {
+      return resolveOsIcon(slug);
     },
 
     /** Resolve a container/group icon by kind. */

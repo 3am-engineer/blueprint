@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>blueprint_ by 3am_ — scanner</title>
+<title>3am_blueprint — scanner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet"/>
@@ -34,9 +34,7 @@
 
   header { display:flex; align-items:center; gap:14px; padding:0 20px; height:58px; border-bottom:1px solid var(--line); flex:0 0 auto; }
   .logo { display:flex; align-items:baseline; gap:8px; font-family:"JetBrains Mono",monospace; font-weight:700; font-size:15.5px; }
-  .logo .name::after { content:"_"; color:var(--teal); animation:blink 1.1s steps(1) infinite; }
-  .logo .by { font-size:10.5px; font-weight:400; color:var(--dim); }
-  .logo .by b { color:var(--mut); font-weight:500; }
+  .logo .cur { color:var(--teal); animation:blink 1.1s steps(1) infinite; }
   @keyframes blink { 50% { opacity:0; } }
   header .back { font-size:12.5px; color:var(--dim); }
   header .back:hover { color:var(--mut); }
@@ -115,6 +113,18 @@
   .check { display:flex; gap:8px; align-items:center; font-size:12.5px; color:var(--mut); margin-top:9px; font-weight:400; }
   .check input { accent-color:var(--pink); }
 
+  /* Utility classes rather than style="" attributes: this page carries live AWS
+     credentials and is served with a nonce CSP, under which a nonce in
+     style-src makes the browser ignore 'unsafe-inline' — so inline style
+     attributes are blocked outright. */
+  .u-clear { clear:both; }
+  .u-mt8 { margin-top:8px; }
+  .u-mt14 { margin-top:14px; }
+  .u-cols2 { grid-template-columns:1fr 1fr; }
+  .u-click { cursor:pointer; }
+  .u-small { font-size:11px; }
+  .u-stroke { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; opacity:.85; }
+
   .btn { border:none; border-radius:10px; font-family:inherit; font-weight:700; cursor:pointer; transition:.15s; }
   #go { width:100%; padding:13px; font-size:14px; color:var(--onaccent); background:var(--grad); box-shadow:var(--shadow); }
   #go:hover:not(:disabled) { transform:translateY(-1px); }
@@ -168,7 +178,7 @@
 <body>
 
 <header>
-  <a class="logo" href="/"><span class="name">blueprint</span><span class="by">by <b>3am_</b></span></a>
+  <a class="logo" href="/"><span class="name">3am<span class="cur">_</span>blueprint</span></a>
   <a class="back" href="/">← back to site</a>
   <div id="headstats"></div>
   <button id="themeBtn" title="Toggle light / dark"><svg class="lic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 1 1 6.4 2.8a4.4 4.4 0 0 0 6.8 6.8z"/></svg></button>
@@ -223,9 +233,13 @@
       <input type="password" id="sk" autocomplete="new-password"/>
       <label for="st">Session token <em>(for temporary credentials)</em></label>
       <input type="password" id="st" autocomplete="new-password"/>
+      <label for="roleArn">Assume role <em>(optional, recommended over pasting target-account keys)</em></label>
+      <input type="text" id="roleArn" placeholder="arn:aws:iam::123456789012:role/BlueprintRead" spellcheck="false" autocomplete="off"/>
+      <label for="externalId">External ID <em>(if the role requires one)</em></label>
+      <input type="text" id="externalId" placeholder="unique-id-from-the-role-trust" spellcheck="false" autocomplete="off"/>
       <div id="expiry"></div>
       <span class="clearlink" id="clearCreds">✕ clear credentials</span>
-      <div style="clear:both"></div>
+      <div class="u-clear"></div>
 
       <div id="codewrap" hidden>
         <label for="code">Access code</label>
@@ -255,12 +269,12 @@
         </div>
       </div>
       <div data-pane="account" hidden>
-        <div class="hint" style="margin-top:8px">Diagrams every resource the credentials can see that
-          carries at least one tag (AWS's Tagging API can't list fully untagged resources).</div>
+        <div class="hint u-mt8">Diagrams tagged resources plus untagged EC2, load balancers,
+          RDS/Aurora, Lambda, EKS and DynamoDB in the selected region(s).</div>
       </div>
 
-      <label style="margin-top:14px">Group resources by</label>
-      <div class="scopes" id="groupby" style="grid-template-columns:1fr 1fr">
+      <label class="u-mt14">Group resources by</label>
+      <div class="scopes u-cols2" id="groupby">
         <button type="button" data-g="network" class="active">Network (VPC/subnet)</button>
         <button type="button" data-g="type">Resource type</button>
       </div>
@@ -275,6 +289,7 @@
       <div class="hint"><b>An empty diagram usually means the wrong region.</b> Chips and the text
         field combine.</div>
       <label class="check"><input type="checkbox" id="allRegions"/> sweep all enabled regions (slower)</label>
+      <div class="hint" id="allRegionsHint" hidden>Region chips are ignored while sweeping all regions.</div>
     </div>
 
     <button type="submit" class="btn" id="go">Scan &amp; draw diagram</button>
@@ -284,9 +299,9 @@
     <div class="secnote"><b>Your keys, your server.</b> Credentials are used for this scan's AWS API calls,
       kept in memory, never stored, never logged. Tip: <span class="mono">⌘/Ctrl + Enter</span> scans.</div>
 
-    <div class="stepcard" id="historycard" hidden style="margin-top:14px">
+    <div class="stepcard u-mt14" id="historycard" hidden>
       <div class="stephead"><h2>Recent scans</h2>
-        <span class="hint-r" id="clearHistory" style="cursor:pointer">clear</span></div>
+        <span class="hint-r u-click" id="clearHistory">clear</span></div>
       <ul id="history"></ul>
       <div class="hint">Stored in this browser only. Diagrams live on the server for ~2 h.</div>
     </div>
@@ -296,19 +311,23 @@
     <div id="rbar">
       <span id="rstats"></span>
       <div class="right">
-        <a id="copyLink" style="cursor:pointer"><svg class="lic" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.4"/><path d="M10.5 3.5h-7v7"/></svg> Copy link</a>
+        <a id="copyLink" class="u-click"><svg class="lic" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.4"/><path d="M10.5 3.5h-7v7"/></svg> Copy link</a>
         <a id="openFull" target="_blank">Open full screen ↗</a>
         <a id="dlSvg" download="aws-architecture.svg">Download SVG</a>
       </div>
     </div>
     <div id="empty"><div class="inner">
-      <div class="art"><svg viewBox="0 0 48 48" width="44" height="44" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;opacity:.85"><rect x="4" y="6" width="14" height="12" rx="2"/><rect x="30" y="6" width="14" height="12" rx="2"/><rect x="17" y="30" width="14" height="12" rx="2"/><path d="M11 18v6h13m20-6v6h-13m-7 0v6"/></svg></div>
+      <div class="art"><svg viewBox="0 0 48 48" width="44" height="44" class="u-stroke"><rect x="4" y="6" width="14" height="12" rx="2"/><rect x="30" y="6" width="14" height="12" rx="2"/><rect x="17" y="30" width="14" height="12" rx="2"/><path d="M11 18v6h13m20-6v6h-13m-7 0v6"/></svg></div>
       <h3>Your diagram appears here</h3>
       <p>Fill in credentials and a scope on the left — or hit
         <span class="mono">Try the demo</span> to see a sample architecture with traffic flows,
         subnets, and the resource inspector. Click any resource to zoom to it.</p>
     </div></div>
-    <iframe id="frame" title="Architecture diagram"></iframe>
+    <!-- The portal needs its own scripts to run, but must not reach back into
+         this page, which holds live AWS keys: no allow-same-origin. -->
+    <iframe id="frame" title="Architecture diagram"
+            sandbox="allow-scripts allow-downloads allow-popups"
+            referrerpolicy="no-referrer"></iframe>
     <div id="veil"><div><div class="ring"></div><p id="veiltext">Scanning…</p></div></div>
   </div>
 </main>
@@ -320,14 +339,24 @@
   let scope = 'tag';
   let requiresCode = false;
   let lastId = null;
+  let lastToken = null;
   let expTimer = null;
+
+  /* Diagram links are HMAC-signed by the server: the id alone will 404. */
+  const viewUrl = (id, token, opts) => {
+    const o = opts || {};
+    const q = new URLSearchParams();
+    if (token) q.set('t', token);
+    if (o.theme) q.set('theme', o.theme);
+    return '/view/' + encodeURIComponent(id) + (o.svg ? '.svg' : '') + '?' + q;
+  };
 
   /* ---------- theme ---------- */
   const root = document.documentElement;
   const applyTheme = t => {
     root.dataset.theme = t;
     localStorage.setItem('aa-theme', t);
-    if (lastId) $('frame').src = '/view/' + lastId + '?theme=' + t;
+    if (lastId) $('frame').src = viewUrl(lastId, lastToken, { theme: t });
   };
   const initial = localStorage.getItem('aa-theme') ||
     (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
@@ -370,7 +399,31 @@
     };
   });
 
-  /* ---------- paste-JSON parsing ---------- */
+  /* ---------- paste-JSON parsing + credential status ---------- */
+  function isTemporaryCred(ak, st) {
+    return !!(st && st.trim()) || (ak && ak.startsWith('ASIA'));
+  }
+
+  /** Parse AWS Expiration (ISO string, epoch seconds/ms, or Date). */
+  function parseAwsExpiration(exp) {
+    if (exp == null || exp === '') return null;
+    if (exp instanceof Date && !isNaN(exp.getTime())) return exp;
+    if (typeof exp === 'number' && isFinite(exp)) {
+      return new Date(exp > 1e12 ? exp : exp * 1000);
+    }
+    const s = String(exp).trim();
+    if (/^\d+$/.test(s)) {
+      const n = Number(s);
+      return new Date(n > 1e12 ? n : n * 1000);
+    }
+    // Safari is picky about "+00:00" — normalize to Z when offset is UTC.
+    const norm = s.replace(/([+-]00:00)$/, 'Z');
+    const d = new Date(norm);
+    if (!isNaN(d.getTime())) return d;
+    const d2 = new Date(s.replace(/\.\d+(?=[+-Z]|$)/, ''));
+    return isNaN(d2.getTime()) ? null : d2;
+  }
+
   function parsePasted(txt) {
     txt = txt.trim();
     if (!txt) return null;
@@ -387,22 +440,112 @@
     const st = g(/AWS_SESSION_TOKEN[="':\s]+([A-Za-z0-9/+=]{40,})/);
     return ak && sk ? { ak, sk, st, exp: '' } : null;
   }
+
+  let credStatusToken = 0;
+  async function verifyCredsWithAws() {
+    const c = creds();
+    if (!c.accessKeyId || !c.secretAccessKey) return { state: 'invalid' };
+    const token = ++credStatusToken;
+    try {
+      const body = { credentials: c };
+      if ($('roleArn').value.trim()) {
+        body.roleArn = $('roleArn').value.trim();
+        if ($('externalId').value.trim()) body.externalId = $('externalId').value.trim();
+      }
+      await api('/api/validate', body);
+      if (token !== credStatusToken) return { state: 'superseded' };
+      return { state: 'valid' };
+    } catch (e) {
+      if (token !== credStatusToken) return { state: 'superseded' };
+      const msg = e.message || '';
+      if (/credentials rejected|expired|invalid|unauthorized|security token/i.test(msg)) {
+        return { state: 'invalid', message: msg };
+      }
+      return { state: 'error', message: msg };
+    }
+  }
+
+  function showCredOk(msg) {
+    const el = $('expiry');
+    el.className = 'ok';
+    el.textContent = msg;
+  }
+
+  function showCredWarn(msg) {
+    const el = $('expiry');
+    el.className = 'warn';
+    el.textContent = msg;
+  }
+
+  function clearCredStatus() {
+    clearInterval(expTimer);
+    $('expiry').className = '';
+    $('expiry').textContent = '';
+  }
+
   function showExpiry(exp) {
     clearInterval(expTimer);
     const el = $('expiry');
-    if (!exp) { el.className = ''; return; }
-    const tick = () => {
-      const ms = new Date(exp) - Date.now();
-      if (isNaN(ms)) { el.className = ''; return; }
-      if (ms <= 0) { el.className = 'warn'; el.textContent = '⚠ These credentials have expired — generate a new session.'; clearInterval(expTimer); return; }
+    const ak = $('ak').value.trim();
+    const st = $('st').value.trim();
+
+    if (!isTemporaryCred(ak, st)) {
+      if (ak && $('sk').value.trim()) showCredOk('✓ Long-lived IAM credentials (no session expiry)');
+      else { el.className = ''; el.textContent = ''; }
+      return;
+    }
+
+    const when = parseAwsExpiration(exp);
+    if (!when) {
+      el.className = '';
+      el.textContent = '';
+      scheduleCredVerify();
+      return;
+    }
+
+    const tick = async () => {
+      const ms = when.getTime() - Date.now();
+      if (ms <= 0) {
+        clearInterval(expTimer);
+        el.className = '';
+        el.textContent = 'Checking credentials…';
+        const v = await verifyCredsWithAws();
+        if (v.state === 'superseded') return;
+        if (v.state === 'valid') showCredOk('✓ Credentials valid (Expiration timestamp was stale — AWS accepted them)');
+        else if (v.state === 'error') showCredWarn('⚠ Could not verify: ' + v.message + ' — try scanning anyway.');
+        else showCredWarn('⚠ These credentials have expired — generate a new session.');
+        return;
+      }
       const m = Math.floor(ms / 60000);
       el.className = m < 6 ? 'warn' : 'ok';
       el.textContent = (m < 6 ? '⚠' : '✓') + ' Temporary credentials — expire in ' +
-        (m >= 60 ? Math.floor(m/60) + ' h ' + (m%60) + ' min' : m + ' min');
+        (m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min');
     };
     tick();
-    expTimer = setInterval(tick, 30000);
+    expTimer = setInterval(() => { tick(); }, 30000);
   }
+
+  let credVerifyTimer;
+  function scheduleCredVerify() {
+    clearTimeout(credVerifyTimer);
+    credVerifyTimer = setTimeout(async () => {
+      const c = creds();
+      if (!c.accessKeyId || !c.secretAccessKey) { clearCredStatus(); return; }
+      if (!isTemporaryCred(c.accessKeyId, c.sessionToken)) {
+        showCredOk('✓ Long-lived IAM credentials (no session expiry)');
+        return;
+      }
+      const el = $('expiry');
+      el.className = '';
+      el.textContent = 'Checking credentials…';
+      const v = await verifyCredsWithAws();
+      if (v.state === 'superseded') return;
+      if (v.state === 'valid') showCredOk('✓ Credentials valid');
+      else if (v.state === 'error') showCredWarn('⚠ Could not verify: ' + v.message);
+      else showCredWarn('⚠ Credentials rejected — check keys or generate a new session.');
+    }, 600);
+  }
+
   $('pastebox').addEventListener('input', () => {
     const p = parsePasted($('pastebox').value);
     if (!p) return;
@@ -411,9 +554,16 @@
     showExpiry(p.exp);
     status('✓ Credentials filled from pasted output.', 'ok');
   });
+  ['ak', 'sk', 'st'].forEach(id => {
+    $(id).addEventListener('input', () => {
+      clearInterval(expTimer);
+      scheduleCredVerify();
+    });
+  });
   $('clearCreds').onclick = () => {
     ['ak','sk','st','pastebox'].forEach(id => { $(id).value = ''; });
-    $('expiry').className = ''; clearInterval(expTimer);
+    clearCredStatus();
+    clearTimeout(credVerifyTimer);
     status('Credentials cleared.', '');
   };
 
@@ -488,6 +638,9 @@
     ...chipSel,
     ...$('regions').value.split(',').map(s => s.trim()).filter(Boolean),
   ])];
+  $('allRegions').addEventListener('change', () => {
+    $('allRegionsHint').hidden = !$('allRegions').checked;
+  });
 
   /* ---------- scan history (browser-side; diagrams live on the server ~2 h) ---------- */
   const hist = () => JSON.parse(localStorage.getItem('aa-history') || '[]');
@@ -511,20 +664,24 @@
         renderHistory();
       };
       li.onclick = async () => {
-        const ok = await fetch('/view/' + item.id, { method: 'HEAD' }).then(r => r.ok).catch(() => false);
+        const ok = await fetch(viewUrl(item.id, item.token), { method: 'HEAD' })
+          .then(r => r.ok).catch(() => false);
         if (!ok) {
           status('That diagram expired on the server — run the scan again.', 'err');
           saveHist(hist().filter(x => x.id !== item.id));
           renderHistory();
           return;
         }
-        showResult({ id: item.id, stats: { resources: item.res, edges: item.edges }, accountId: item.acct }, true);
+        showResult({
+          id: item.id, token: item.token,
+          stats: { resources: item.res, edges: item.edges }, accountId: item.acct,
+        }, true);
       };
       $('history').appendChild(li);
     });
   }
   function pushHistory(d, title) {
-    saveHist([{ id: d.id, title, ts: Date.now(),
+    saveHist([{ id: d.id, token: d.token || null, title, ts: Date.now(),
       res: d.stats?.resources ?? 0, edges: d.stats?.edges ?? 0, acct: d.accountId || '' },
       ...hist().filter(x => x.id !== d.id)]);
     renderHistory();
@@ -550,21 +707,31 @@
 
   function showResult(d, fromHistory) {
     lastId = d.id;
+    lastToken = d.token || null;
     void fromHistory;
     $('empty').style.display = 'none';
     const f = $('frame');
     f.style.display = 'block';
-    f.src = '/view/' + d.id + '?theme=' + theme();
+    f.src = viewUrl(d.id, d.token, { theme: theme() });
     $('rbar').style.display = 'flex';
-    $('openFull').href = '/view/' + d.id + '?theme=' + theme();
-    $('dlSvg').href = '/view/' + d.id + '.svg';
+    $('openFull').href = viewUrl(d.id, d.token, { theme: theme() });
+    $('dlSvg').href = viewUrl(d.id, d.token, { svg: true });
     const s = d.stats || {};
     $('rstats').textContent = (s.resources ?? '?') + ' resources · ' + (s.edges ?? '?') + ' links' +
       (s.open ? ' · ' + s.open + ' open to internet' : '');
     $('headstats').innerHTML = '<span><b>' + esc(s.resources ?? '?') + '</b> resources</span>' +
       '<span><b>' + esc(s.edges ?? '?') + '</b> links</span>' +
-      (d.accountId ? '<span class="mono" style="font-size:11px">' + esc(d.accountId) + '</span>' : '');
-    if (!s.resources) status('Scan finished but matched nothing — check region(s) and tag spelling.', 'err');
+      (d.accountId ? '<span class="mono u-small">' + esc(d.accountId) + '</span>' : '');
+    if (!s.resources) {
+      const m = d.meta || {};
+      const where = m.regions?.length ? esc(m.regions.join(', '))
+        : '(none — select a region chip or tick "sweep all enabled regions")';
+      const tag = m.tagKey
+        ? 'tag "' + esc(m.tagKey) + (m.tagValue ? '=' + esc(m.tagValue) : '') + '"'
+        : 'scope';
+      status('0 resources for ' + tag + ' in: ' + where +
+        '. Try another region or tick "sweep all enabled regions".', 'err');
+    }
   }
 
   $('loadVpcs').onclick = async () => {
@@ -572,7 +739,12 @@
     if (!rg.length) return status('Enter a region first — VPCs are regional.', 'err');
     busy(true); status('Loading VPCs…', '', true);
     try {
-      const d = await api('/api/vpcs', { credentials: creds(), regions: rg });
+      const vpcBody = { credentials: creds(), regions: rg };
+      if ($('roleArn').value.trim()) {
+        vpcBody.roleArn = $('roleArn').value.trim();
+        if ($('externalId').value.trim()) vpcBody.externalId = $('externalId').value.trim();
+      }
+      const d = await api('/api/vpcs', vpcBody);
       const sel = $('vpc');
       sel.innerHTML = d.vpcs.length ? '' : '<option value="">no VPCs found</option>';
       for (const v of d.vpcs) {
@@ -595,7 +767,12 @@
     ev.preventDefault();
     const c = creds();
     if (!c.accessKeyId || !c.secretAccessKey) return status('Access key ID and secret are required.', 'err');
-    const body = { credentials: c, scope, groupBy, regions: regions(), allRegions: $('allRegions').checked };
+    const body = { credentials: c, scope, groupBy, allRegions: $('allRegions').checked };
+    if ($('roleArn').value.trim()) {
+      body.roleArn = $('roleArn').value.trim();
+      if ($('externalId').value.trim()) body.externalId = $('externalId').value.trim();
+    }
+    if (!body.allRegions) body.regions = regions();
     if (scope === 'tag') {
       body.tagKey = $('tagKey').value.trim();
       body.tagValue = $('tagValue').value.trim();
@@ -606,7 +783,7 @@
       const opt = $('vpc').selectedOptions[0];
       if (opt && opt.dataset.region) body.regions = [opt.dataset.region];
     }
-    if (!body.regions.length && !body.allRegions && scope !== 'vpc') {
+    if (!body.allRegions && !body.regions?.length && scope !== 'vpc') {
       return status('Enter at least one region, or tick "sweep all enabled regions".', 'err');
     }
     busy(true); veil(true, STAGES[0]);
@@ -634,7 +811,7 @@
 
   $('copyLink').onclick = async () => {
     if (!lastId) return;
-    const url = location.origin + '/view/' + lastId + '?theme=' + theme();
+    const url = location.origin + viewUrl(lastId, lastToken, { theme: theme() });
     try {
       await navigator.clipboard.writeText(url);
       const orig = $('copyLink').innerHTML;

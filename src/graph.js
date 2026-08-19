@@ -1,3 +1,6 @@
+import { osLabel } from './os-icons.js';
+import { splitInternetNodes } from './routes.js';
+
 /**
  * Turn a scan model into a logical diagram model:
  *   - containers: account > region > vpc > subnet  (+ a "Regional services" box)
@@ -18,7 +21,6 @@ const FRIENDLY = {
   'elasticloadbalancing:loadbalancer': 'Load Balancer',
   'elasticloadbalancing:targetgroup': 'Target Group',
   'rds:db': 'RDS Instance',
-  'rds:cluster': 'RDS Cluster',
   'lambda:function': 'Lambda Function',
   'autoscaling:autoScalingGroup': 'Auto Scaling Group',
   's3': 'S3 Bucket',
@@ -35,11 +37,25 @@ const FRIENDLY = {
   'cloudfront': 'CloudFront',
   'events:rule': 'EventBridge Rule',
   'states:stateMachine': 'Step Functions',
+  'elasticloadbalancing:listener': 'Listener',
+  'elasticloadbalancing:listener-rule': 'Listener Rule',
+  'cloudformation:stack': 'CloudFormation Stack',
+  'eks:pod': 'EKS Pod',
+  'eks:nodegroup': 'EKS Node Group',
+  'acm:certificate': 'ACM Certificate',
+  'cloudfront:distribution': 'CloudFront Distribution',
+  'apigateway:apis': 'HTTP API',
+  'apigateway:restapis': 'REST API',
+  'rds:cluster': 'Aurora Cluster',
 };
 
-function friendly(service, type) {
+function titleCase(s) {
+  return String(s || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+export function friendlyLabel(service, type) {
   return FRIENDLY[`${service}:${type}`] || FRIENDLY[service] ||
-    (service.toUpperCase() + (type ? ' ' + type.replace(/[-_]/g, ' ') : ''));
+    [titleCase(service), type ? titleCase(type) : ''].filter(Boolean).join(' ');
 }
 
 /** Simple globe glyph for the synthetic "Internet" node (0.0.0.0/0 ingress). */
@@ -65,7 +81,15 @@ const HIDDEN_TYPES = new Set([
   'elasticloadbalancing:targetgroup', 'elasticloadbalancing:listener',
   'rds:subgrp', 'rds:pg', 'rds:og', 'rds:secgrp',
   'cloudwatch:alarm', 'cloudwatch:dashboard', 'logs:log-group',
+  // Ephemeral / plumbing that drowned real topology on the review scan
+  // (37 pods + 12 listener rules + 2 stacks = 51 of 81 visible nodes).
+  'eks:pod', 'eks:fargateprofile', 'eks:identityproviderconfig',
+  'elasticloadbalancing:listener-rule',
+  'cloudformation:stack', 'cloudformation:stackset',
+  'ecs:task', 'ecs:task-definition',
 ]);
+
+export { HIDDEN_TYPES };
 
 /** Logical category for --group-by type mode. */
 function categoryOf(r) {
@@ -81,6 +105,7 @@ function categoryOf(r) {
 }
 
 export function buildGraph(scan, icons, options = {}) {
+  splitInternetNodes(scan);
   const showAll = !!options.showAll;
   const byType = options.groupBy === 'type';
   const containers = new Map();   // id -> container
@@ -171,20 +196,33 @@ export function buildGraph(scan, icons, options = {}) {
     }
 
     const icon = r.service === 'internet' ? { dataUri: INTERNET_ICON, matched: true } : icons.resolve(r.service, r.type);
+    const egressNet = r.service === 'internet' && (r.type === 'egress' || r.id === 'internet-egress');
+    let sublabel = r.service === 'internet' ? (egressNet ? 'Outbound' : 'Inbound') : friendlyLabel(r.service, r.type);
+    let osIcon = null;
+    let osLabelText = null;
+    if (r.service === 'ec2' && r.type === 'instance' && r.extra?.os) {
+      const osResolved = icons.resolveOs(r.extra.os);
+      if (osResolved?.dataUri) osIcon = osResolved.dataUri;
+      osLabelText = osLabel(r.extra.os);
+      sublabel = `EC2 · ${osLabelText}`;
+    }
     nodes.push({
       id: r.arn,
-      kind: r.service === 'internet' ? 'internet' : 'resource',
+      kind: r.service === 'internet' ? (egressNet ? 'internet-egress' : 'internet') : 'resource',
       parent: parentId,
-      label: truncate(r.name || r.id, 44),   // renderer wraps to two lines
-      sublabel: r.service === 'internet' ? 'Internet' : friendly(r.service, r.type),
+      label: truncate(r.name || r.id, 42),
+      sublabel,
       service: r.service,
       type: r.type,
       icon: icon.dataUri,
       iconMatched: icon.matched,
+      osIcon,
+      osLabel: osLabelText,
       zone,
       untagged: !!r.untagged,
       // Public resource policy (Principal "*", no conditions) — badge it.
       open: r.extra?.publicPolicy ? `public resource policy (${r.extra.publicPolicy})` : undefined,
+      diffStatus: r.diffStatus,
     });
   }
 
@@ -213,17 +251,33 @@ export function buildGraph(scan, icons, options = {}) {
     if (!nodeIds.has(e.from) || !nodeIds.has(e.to)) continue;
     const key = `${e.from}|${e.to}|${e.kind || ''}`;
     if (!merged.has(key)) {
-      merged.set(key, { from: e.from, to: e.to, kind: e.kind || '', labels: [] });
+      merged.set(key, { from: e.from, to: e.to, kind: e.kind || '', labels: [], diffStatus: e.diffStatus });
     }
     const m = merged.get(key);
     if (e.label && !m.labels.includes(e.label)) m.labels.push(e.label);
+    if (e.diffStatus) m.diffStatus = e.diffStatus;
   }
   let ei = 0;
   for (const m of merged.values()) {
     const label = m.labels.length > 3
       ? `${m.labels.slice(0, 3).join(' · ')} +${m.labels.length - 3}`
       : m.labels.join(' · ');
-    edges.push({ id: `e${ei++}`, from: m.from, to: m.to, label, kind: m.kind });
+    edges.push({ id: `e${ei++}`, from: m.from, to: m.to, label, kind: m.kind, diffStatus: m.diffStatus });
+  }
+
+  // A specific relationship (LB target, event, IAM grant, …) already explains
+  // the hop; the matching sg-flow is the same pair drawn again.
+  {
+    const specific = new Set();
+    for (const e of edges) {
+      if (e.kind && e.kind !== 'sg-flow') {
+        specific.add(`${e.from}|${e.to}`);
+        specific.add(`${e.to}|${e.from}`);
+      }
+    }
+    const kept = edges.filter(e => e.kind !== 'sg-flow' || !specific.has(`${e.from}|${e.to}`));
+    edges.length = 0;
+    edges.push(...kept);
   }
 
   // Internet exposure: draw a real connector only into entry-point services
@@ -234,7 +288,7 @@ export function buildGraph(scan, icons, options = {}) {
   const nodeById = new Map(nodes.map(n => [n.id, n]));
   const keptEdges = [];
   for (const e of edges) {
-    if (e.kind === 'internet') {
+    if (e.kind === 'internet' && !e.diffStatus) {
       const t = nodeById.get(e.to);
       const isEntry = t && (ENTRY_SERVICES.has(t.service) ||
         t.type === 'internet-gateway' || t.type === 'natgateway');
@@ -247,10 +301,14 @@ export function buildGraph(scan, icons, options = {}) {
   }
   edges.length = 0; edges.push(...keptEdges);
 
-  // Drop the synthetic Internet node if nothing connects to it anymore.
+  // Drop synthetic Internet nodes (inbound and egress) that nothing uses.
   const stillLinked = new Set(edges.flatMap(e => [e.from, e.to]));
-  const inetIdx = nodes.findIndex(n => n.kind === 'internet');
-  if (inetIdx >= 0 && !stillLinked.has(nodes[inetIdx].id)) nodes.splice(inetIdx, 1);
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    if ((nodes[i].kind === 'internet' || nodes[i].kind === 'internet-egress') &&
+      !stillLinked.has(nodes[i].id)) {
+      nodes.splice(i, 1);
+    }
+  }
 
   // ---- Bundle collapse ----
   // EKS-style setups produce edge explosions: the cluster SG allows all
@@ -259,7 +317,7 @@ export function buildGraph(scan, icons, options = {}) {
   // containers, draw ONE container-to-container edge; when they form a mesh
   // INSIDE one container, drop them (intra-group traffic is implied).
   const COLLAPSE_MIN = 4;
-  const KEEP_KINDS = new Set(['internet', 'tls', 'origin']);
+  const KEEP_KINDS = new Set(['internet', 'internet-out', 'tls', 'origin']);
   const parentOf = new Map(nodes.map(n => [n.id, n.parent]));
   {
     const containerIds = new Set(containers.keys());
@@ -267,7 +325,7 @@ export function buildGraph(scan, icons, options = {}) {
     const groups = new Map();
     for (const e of edges) {
       const pf = parentOf.get(e.from), pt = parentOf.get(e.to);
-      if (KEEP_KINDS.has(e.kind) || !pf || !pt ||
+      if (KEEP_KINDS.has(e.kind) || e.diffStatus || !pf || !pt ||
         !containerIds.has(pf) || !containerIds.has(pt)) { kept.push(e); continue; }
       const key = `${e.kind}|${e.label}|${pf}|${pt}`;
       if (!groups.has(key)) groups.set(key, { pf, pt, list: [] });
@@ -294,6 +352,29 @@ export function buildGraph(scan, icons, options = {}) {
     }
   }
 
+  // Public hosts that share a subnet collapse to one egress line — except a
+  // NAT gateway, which always keeps its own Internet hop.
+  {
+    const natIds = new Set(nodes.filter(n => n.type === 'natgateway').map(n => n.id));
+    const groups = new Map();
+    const kept = [];
+    let seq = edges.length + 200;
+    for (const e of edges) {
+      if (e.kind !== 'internet-out' || e.to !== 'internet-egress') { kept.push(e); continue; }
+      if (natIds.has(e.from)) { kept.push(e); continue; }
+      const pf = parentOf.get(e.from);
+      if (!pf) { kept.push(e); continue; }
+      if (!groups.has(pf)) groups.set(pf, []);
+      groups.get(pf).push(e);
+    }
+    for (const [pf, list] of groups) {
+      if (list.length === 1) { kept.push(list[0]); continue; }
+      kept.push({ id: `e${seq++}`, from: pf, to: 'internet-egress', label: 'egress', kind: 'internet-out' });
+    }
+    edges.length = 0;
+    edges.push(...kept);
+  }
+
   // ---- Unconnected leftovers ----
   // Edge-less nodes sitting directly in a region (launch templates, stray
   // artifacts) otherwise stretch the region into one enormous row. Park them
@@ -301,7 +382,7 @@ export function buildGraph(scan, icons, options = {}) {
   {
     const touched = new Set(edges.flatMap(e => [e.from, e.to]));
     for (const n of nodes) {
-      if (n.kind === 'internet' || touched.has(n.id)) continue;
+      if (n.kind === 'internet' || n.kind === 'internet-egress' || touched.has(n.id)) continue;
       const p = n.parent && containers.get(n.parent);
       if (p && p.kind === 'region') {
         const region = p.label;
@@ -332,7 +413,7 @@ export function buildGraph(scan, icons, options = {}) {
   // Legend — unique services present (excluding the synthetic Internet node).
   const legendMap = new Map();
   for (const n of nodes) {
-    if (n.kind === 'internet') continue;
+    if (n.kind === 'internet' || n.kind === 'internet-egress') continue;
     if (!legendMap.has(n.sublabel)) legendMap.set(n.sublabel, n.icon);
   }
   const legend = [...legendMap.entries()].map(([label, icon]) => ({ label, icon }));
@@ -355,7 +436,7 @@ export function buildGraph(scan, icons, options = {}) {
     legend,
     subnets: subnetList,
     stats: {
-      resources: nodes.filter(n => !n.untagged && n.kind !== 'internet').length,
+      resources: nodes.filter(n => !n.untagged && n.kind !== 'internet' && n.kind !== 'internet-egress').length,
       external: nodes.filter(n => n.untagged).length,
       open: nodes.filter(n => n.open).length,
       hidden: hiddenCount,

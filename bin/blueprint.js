@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
- * blueprint_ by 3am_ — scan AWS by tag and build a browsable architecture diagram.
+ * 3am_blueprint — scan AWS by tag and build a browsable architecture diagram.
  *
  * Usage:
  *   blueprint                                       (interactive TUI)
  *   blueprint --tag <TagKey> [--value <TagValue>] [--profile <name>] [options]
  *   blueprint --from-json <scan.json> [options]     (offline render, no AWS calls)
+ *   blueprint diff <old.json> <new.json> [options]  (compare two scans)
  */
 import { parseArgs, printHelp } from '../src/args.js';
 import { runPipeline, resolveIconsDir, projectRoot } from '../src/pipeline.js';
+import { formatDiff } from '../src/diff.js';
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -33,14 +35,36 @@ async function main() {
     const sArgs = parseArgs(argv.slice(1));
     const iconsDir = resolveIconsDir(sArgs);
     if (!iconsDir) {
-      console.error('Error: AWS architecture icons not found. Run "blueprint fetch-icons" first.');
+      console.error('! AWS architecture icons not found — diagrams will use generic tiles.');
+      console.error('  Run "blueprint fetch-icons" for the official icon set.');
+    }
+    try {
+      startServer({
+        port: Number(sArgs.port) || 8787,
+        host: sArgs.host,
+        iconsDir, projectRoot,
+      });
+    } catch (e) {
+      // startServer refuses unsafe exposure (public bind with no access code);
+      // it has already explained why.
+      process.exit(e.exitCode || 1);
+    }
+    return;
+  }
+
+  // Subcommand: compare two saved scans (no AWS calls).
+  if (argv[0] === 'diff') {
+    const oldPath = argv[1];
+    const newPath = argv[2];
+    if (!oldPath || !newPath || String(oldPath).startsWith('-') || String(newPath).startsWith('-')) {
+      console.error('Usage: blueprint diff <old-scan.json> <new-scan.json> [--out <dir>]');
       process.exit(1);
     }
-    startServer({
-      port: Number(sArgs.port) || 8787,
-      host: sArgs.host,
-      iconsDir, projectRoot,
-    });
+    const rest = parseArgs(argv.slice(3));
+    const result = await runPipeline({ ...rest, fromJson: newPath, diff: oldPath });
+    if (result.diff) console.log(formatDiff(result.diff));
+    console.error(`\n✔ Done. Open the portal:\n    ${result.htmlPath}\n`);
+    console.error(`  Also written: diagram.svg, diff.json, scan.json in ${result.outDir}`);
     return;
   }
 
@@ -57,11 +81,12 @@ async function main() {
     console.error('Note: --vpc without --region scans the default region only.');
   }
 
-  const { htmlPath, outDir } = await runPipeline(args);
+  const { htmlPath, outDir, diff } = await runPipeline(args);
+  if (diff) console.log(formatDiff(diff));
 
   console.error(`\n✔ Done. Open the portal:\n    ${htmlPath}\n`);
   console.error(`  Also written: diagram.svg, diagram.drawio (editable), diagram.mmd (Mermaid),`);
-  console.error(`  diagram.excalidraw, diagram.json, scan.json in ${outDir}`);
+  console.error(`  diagram.excalidraw, diagram.json, scan.json${diff ? ', diff.json' : ''} in ${outDir}`);
 }
 
 main().catch(err => {

@@ -19,3 +19,51 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: node bin/blueprint.js --from-json examples/sample-scan.json --out /tmp/demo
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run audit
+
+  # Only a real browser can prove the Content-Security-Policy and the iframe
+  # sandbox did not break the app; the HTML looks fine either way.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: serve and smoke test in Chrome
+        run: |
+          node bin/blueprint.js serve --port 8799 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8799/healthz && break
+            sleep 1
+          done
+          CHROME_PATH="$(command -v google-chrome || command -v chromium-browser || true)" \
+            node scripts/smoke-browser.mjs http://127.0.0.1:8799
+
+  # The server must refuse to accept AWS credentials on an open port. If this
+  # ever starts succeeding, a public deployment has become a credential sink.
+  exposure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: refuses a public bind without an access code
+        run: |
+          if node bin/blueprint.js serve --host 0.0.0.0 --port 8788; then
+            echo "::error::server bound publicly with no ACCESS_CODE"
+            exit 1
+          fi
+          echo "correctly refused to start"

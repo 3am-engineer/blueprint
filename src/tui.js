@@ -1,5 +1,5 @@
 /**
- * blueprint_ TUI — interactive terminal wizard (runs when the CLI is invoked
+ * 3am_blueprint TUI — interactive terminal wizard (runs when the CLI is invoked
  * with no arguments, or via `blueprint tui`).
  *
  * Wraps the same pipeline as the flag CLI: pick a scope, profile, and regions,
@@ -132,10 +132,12 @@ async function askScanArgs(mode) {
     message: 'Extras (space to toggle, enter to continue)',
     options: [
       { value: 'showAll', label: 'Include low-signal resources', hint: 'AMIs, volumes, ENIs, …' },
+      { value: 'diff', label: 'Diff against last scan in the output dir', hint: 'needs a previous scan.json' },
     ],
     required: false,
   }));
   if (extra.includes('showAll')) args.showAll = true;
+  if (extra.includes('diff')) args.diff = true;
 
   args.out = bail(await p.text({
     message: 'Output directory',
@@ -145,15 +147,31 @@ async function askScanArgs(mode) {
   return args;
 }
 
-async function runScanFlow(mode) {
-  const args = mode === 'json'
+async function runDiffFlow() {
+  const oldPath = bail(await p.text({
+    message: 'Previous scan.json',
+    initialValue: fs.existsSync('out/scan.prev.json') ? 'out/scan.prev.json'
+      : fs.existsSync('out/scan.json') ? 'out/scan.json' : '',
+    validate: v => (fs.existsSync(v?.trim() || '') ? undefined : 'File not found'),
+  })).trim();
+  const newPath = bail(await p.text({
+    message: 'New scan.json',
+    initialValue: fs.existsSync('out/scan.json') && oldPath !== 'out/scan.json' ? 'out/scan.json' : '',
+    validate: v => (fs.existsSync(v?.trim() || '') ? undefined : 'File not found'),
+  })).trim();
+  const out = bail(await p.text({ message: 'Output directory', initialValue: 'out' })).trim() || 'out';
+  return runScanFlow('json', { fromJson: newPath, diff: oldPath, out });
+}
+
+async function runScanFlow(mode, preset) {
+  const args = preset || (mode === 'json'
     ? { fromJson: bail(await p.text({
         message: 'Path to scan.json',
         initialValue: fs.existsSync('out/scan.json') ? 'out/scan.json' : '',
         validate: v => (fs.existsSync(v?.trim() || '') ? undefined : 'File not found'),
       })).trim(),
       out: bail(await p.text({ message: 'Output directory', initialValue: 'out' })).trim() || 'out' }
-    : await askScanArgs(mode);
+    : await askScanArgs(mode));
 
   const { result } = await withSpinner(
     mode === 'json' ? 'Rendering…' : 'Scanning AWS…',
@@ -162,10 +180,14 @@ async function runScanFlow(mode) {
   );
 
   const n = result.scan.resources?.length || 0;
+  const d = result.diff?.summary;
   p.note(
-    `${pc.bold(String(n))} resources · ${result.graph.stats.edges} links\n` +
-    `${pc.dim('portal ')}${result.htmlPath}\n` +
-    `${pc.dim('also   ')}diagram.svg · .drawio · .mmd · .excalidraw · scan.json`,
+    `${pc.bold(String(n))} resources · ${result.graph.stats.edges} links` +
+    (d ? `\n${pc.green('+' + d.added)} ${pc.red('−' + d.removed)} ${pc.yellow('~' + d.changed)}` +
+      (d.exposure ? pc.red(` · ${d.exposure} new exposure`) : '') : '') +
+    `\n${pc.dim('portal ')}${result.htmlPath}\n` +
+    `${pc.dim('also   ')}diagram.svg · .drawio · .mmd · .excalidraw · scan.json` +
+    (result.diff ? ' · diff.json' : ''),
     'Result');
 
   const next = bail(await p.select({
@@ -202,7 +224,7 @@ let webUi = null;
 async function startWebUiFlow() {
   const port = Number(bail(await p.text({ message: 'Port', initialValue: '8787' }))) || 8787;
   const iconsDir = resolveIconsDir();
-  if (!iconsDir) { p.log.error('No icons found — fetch the AWS set first.'); return 'menu'; }
+  if (!iconsDir) p.log.warn('No icons installed — diagrams will use generic tiles (fetch the AWS set from the menu).');
 
   const { startServer } = await import('./server.js');
   const s = p.spinner();
@@ -255,7 +277,7 @@ async function stopWebUi() {
 
 export async function runTui() {
   console.clear();
-  p.intro(`${pc.bgCyan(pc.black(' blueprint_ '))} ${pc.dim('by 3am_ — AWS architecture, drawn while you sleep')}`);
+  p.intro(`${pc.bgCyan(pc.black(' 3am_blueprint '))} ${pc.dim('AWS architecture, drawn while you sleep')}`);
 
   if (!resolveIconsDir()) {
     p.log.warn('AWS architecture icons are not installed yet.');
@@ -274,8 +296,9 @@ export async function runTui() {
       options: [
         { value: 'tag', label: 'Scan by tag', hint: 'key or key=value' },
         { value: 'vpc', label: 'Scan one VPC' },
-        { value: 'account', label: 'Scan the whole account', hint: 'tagged resources' },
+        { value: 'account', label: 'Scan the whole account', hint: 'tagged + untagged common services' },
         { value: 'json', label: 'Re-render a saved scan.json', hint: 'offline' },
+        { value: 'diff', label: 'Compare two scans', hint: 'highlight what changed' },
         webUi
           ? { value: 'serve', label: `Web UI ${pc.green('● running')}`, hint: `${webUi.url} — open · stop` }
           : { value: 'serve', label: 'Start the web UI', hint: 'runs in the background' },
@@ -289,6 +312,7 @@ export async function runTui() {
       if (mode === 'quit') next = 'quit';
       else if (mode === 'icons') next = await runFetchIconsFlow();
       else if (mode === 'serve') next = webUi ? await webUiMenuFlow() : await startWebUiFlow();
+      else if (mode === 'diff') next = await runDiffFlow();
       else next = await runScanFlow(mode);
     } catch (err) {
       p.log.error(err?.message || String(err));

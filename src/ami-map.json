@@ -1,0 +1,5 @@
+{
+  "_comment": "Extend this map with AMI IDs your account uses. Keys are ami-… IDs, values are OS slugs from os-icons.js (amazon-linux, ubuntu, debian, rhel, rocky, almalinux, centos, windows, suse, fedora, linux).",
+  "ami-0c55b159cbfafe1f0": "amazon-linux",
+  "ami-0abcdef1234567890": "ubuntu"
+}

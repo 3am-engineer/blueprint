@@ -15,7 +15,7 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { toDrawio, toMermaid, toExcalidraw } from './export.js';
 
-const NODE_W = 138, NODE_H = 100, ICON = 44;
+const NODE_W = 138, NODE_H = 100, ICON = 44, OS_BADGE = 20;
 const FONT = `'Amazon Ember','Segoe UI',Helvetica,Arial,sans-serif`;
 
 /** Official AWS group-container palette (2023+ icon guidelines). */
@@ -30,38 +30,62 @@ const KIND_STYLE = {
   regional:         { stroke: '#7D8998', fill: '#7D8998', fillOpacity: 0.04, dash: '4 4' },
 };
 
-/** Wrap a node label into at most two lines (break at separators when possible). */
-function nodeLines(label) {
-  const s = String(label);
-  if (s.length <= 20) return [s];
-  const MAX = 22;
-  let br = -1;
-  for (let i = 1; i < s.length && i <= MAX; i++) {
-    if (/[ \-_.:/]/.test(s[i])) br = i;
+const LABEL_CHARS = 16;
+const LABEL_LINES = 3;
+
+/** Wrap a node label; ellipsize the last line so text never overflows the card. */
+export function nodeLines(label) {
+  let rest = String(label || '');
+  const lines = [];
+  while (rest && lines.length < LABEL_LINES) {
+    if (rest.length <= LABEL_CHARS) { lines.push(rest); break; }
+    let br = -1;
+    for (let i = 1; i < rest.length && i <= LABEL_CHARS; i++) {
+      if (/[ \-_.:/]/.test(rest[i])) br = i;
+    }
+    if (br < 6) br = LABEL_CHARS;
+    const rawEnd = br + (rest[br] !== ' ' ? 1 : 0);
+    let take = rest.slice(0, rawEnd).replace(/[\s\-_./]+$/, '');
+    rest = rest.slice(rawEnd).replace(/^[\s\-_./]+/, '');
+    if (!take) {
+      take = rest.slice(0, LABEL_CHARS);
+      rest = rest.slice(take.length);
+    }
+    if (lines.length === LABEL_LINES - 1) {
+      const leftover = take + rest;
+      take = leftover.length > LABEL_CHARS ? leftover.slice(0, LABEL_CHARS - 1) + '…' : leftover;
+      rest = '';
+    }
+    lines.push(take);
   }
-  if (br < 8) br = Math.min(MAX, Math.ceil(s.length / 2));
-  const keepChar = s[br] !== ' ';
-  const a = s.slice(0, br + (keepChar ? 1 : 0));
-  const b = s.slice(br + 1);
-  return b ? [a, b] : [a];
+  return lines.length ? lines : [''];
 }
 
-/** Per-node card size — wide enough for the full (wrapped) label. */
+export function fitSublabel(s) {
+  s = String(s || '');
+  return s.length > 20 ? s.slice(0, 19) + '…' : s;
+}
+
+/** Per-node card size — wide enough for the wrapped (ellipsized) label. */
 function nodeSize(n) {
   const lines = nodeLines(n.label);
+  const sub = n.sublabel && n.sublabel !== n.label ? fitSublabel(n.sublabel) : '';
   const textW = Math.max(
     ...lines.map(l => l.length * 6.9),
-    String(n.sublabel || '').length * 5.2,
+    sub.length * 5.2,
   ) + 20;
   return {
-    w: Math.max(NODE_W, Math.min(250, Math.ceil(textW))),
-    h: lines.length > 1 ? NODE_H + 14 : NODE_H,
+    w: Math.max(NODE_W, Math.min(196, Math.ceil(textW))),
+    h: 58 + lines.length * 13 + (sub ? 16 : 8),
     lines,
+    sub,
   };
 }
 
 const EDGE_STYLE = {
   internet:     { color: '#DD6B10', label: 'Internet ingress' },
+  'internet-out': { color: '#C45500', label: 'Internet egress', dash: '5 4' },
+  'nat-egress': { color: '#8C4FFF', label: 'Private subnet → NAT', dash: '5 4' },
   'lb-target':  { color: '#0972D3', label: 'Load balancer → target' },
   'sg-flow':    { color: '#067F68', label: 'Allowed traffic (security groups)' },
   'sg-wide':    { color: '#B7791F', label: 'Broad SG rule — review', dash: '3 3' },
@@ -292,11 +316,113 @@ async function layout(graph) {
     }
   }
 
+  // Internet nodes are root siblings of the account. ELK parks them beside
+  // the box and routes ingress around the perimeter — the inbound globe
+  // looks orphaned and the orange lines wrap the whole diagram. Pin inbound
+  // above the account and egress below, then draw short orthogonal stubs.
+  const sized = placeInternetPoles(graph, outNodes, outContainers, outEdges, totalW, totalH);
+  totalW = sized.w;
+  totalH = sized.h;
+
   return {
     width: Math.ceil(totalW),
     height: Math.ceil(totalH),
     nodes: outNodes, containers: outContainers, edges: outEdges,
   };
+}
+
+function placeInternetPoles(graph, outNodes, outContainers, outEdges, totalW, totalH) {
+  const account = outContainers.find(c => c.kind === 'account');
+  const inbound = outNodes.find(n => n.kind === 'internet');
+  const egress = outNodes.find(n => n.kind === 'internet-egress');
+  if (!account || (!inbound && !egress)) return { w: totalW, h: totalH };
+
+  const GAP = 72;
+  let topPad = 0;
+  if (inbound) {
+    const need = inbound.h + GAP;
+    if (account.y < need + 8) topPad = need + 8 - account.y;
+  }
+  if (topPad) {
+    for (const n of outNodes) n.y += topPad;
+    for (const c of outContainers) c.y += topPad;
+    for (const e of outEdges) for (const p of e.points || []) p.y += topPad;
+  }
+
+  const acc = outContainers.find(c => c.kind === 'account');
+  const cx = acc.x + acc.w / 2;
+  if (inbound) {
+    inbound.x = cx - inbound.w / 2;
+    inbound.y = acc.y - inbound.h - GAP;
+  }
+  if (egress) {
+    egress.x = cx - egress.w / 2;
+    egress.y = acc.y + acc.h + GAP;
+  }
+
+  const boxOf = id => outNodes.find(n => n.id === id) || outContainers.find(c => c.id === id);
+  const edgeById = new Map(graph.edges.map(e => [e.id, e]));
+  const poleEdges = [];
+  for (const e of outEdges) {
+    const meta = edgeById.get(e.id);
+    if (!meta) continue;
+    const fromInet = meta.from === 'internet' || meta.from === 'internet-egress';
+    const toInet = meta.to === 'internet' || meta.to === 'internet-egress';
+    if (fromInet || toInet) poleEdges.push({ e, meta });
+  }
+  const inboundEdges = poleEdges.filter(x => x.meta.from === 'internet');
+  const egressEdges = poleEdges.filter(x => x.meta.to === 'internet-egress' || x.meta.from === 'internet-egress');
+  inboundEdges.sort((a, b) => (boxOf(a.meta.to)?.x || 0) - (boxOf(b.meta.to)?.x || 0));
+  egressEdges.sort((a, b) => (boxOf(a.meta.from)?.x || 0) - (boxOf(b.meta.from)?.x || 0));
+
+  const routePole = (items, pole, fromPole) => {
+    items.forEach((item, i) => {
+      const a = boxOf(item.meta.from), b = boxOf(item.meta.to);
+      if (!a || !b || a.w == null || b.w == null) return;
+      const spread = (i - (items.length - 1) / 2) * 32;
+      const start = fromPole
+        ? { x: pole.x + pole.w / 2 + spread, y: pole.y + pole.h }
+        : { x: a.x + a.w / 2, y: a.y + a.h };
+      const end = fromPole
+        ? { x: b.x + b.w / 2, y: b.y }
+        : { x: pole.x + pole.w / 2 + spread, y: pole.y };
+      const midY = (start.y + end.y) / 2 + (i - (items.length - 1) / 2) * 18;
+      item.e.points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end];
+      if (item.e.label) {
+        item.e.label.x = (start.x + end.x) / 2 - (item.e.label.w || 40) / 2;
+        item.e.label.y = midY - (item.e.label.h || 14) / 2;
+      }
+    });
+  };
+  if (inbound) routePole(inboundEdges, inbound, true);
+  if (egress) routePole(egressEdges, egress, false);
+  deconflictLabels(outEdges);
+
+  const maxX = Math.max(
+    totalW,
+    ...outNodes.map(n => n.x + n.w),
+    ...outContainers.map(c => c.x + c.w),
+  );
+  const maxY = Math.max(
+    totalH,
+    ...outNodes.map(n => n.y + n.h),
+    ...outContainers.map(c => c.y + c.h),
+  );
+  return { w: maxX + 16, h: maxY + 16 };
+}
+
+/** Nudge stacked edge-label boxes so HTTP / HTTPS chips do not sit on top of each other. */
+export function deconflictLabels(outEdges) {
+  const labs = outEdges.filter(e => e.label && e.label.w);
+  labs.sort((a, b) => (a.label.y - b.label.y) || (a.label.x - b.label.x));
+  for (let i = 0; i < labs.length; i++) {
+    for (let j = 0; j < i; j++) {
+      const a = labs[j].label, b = labs[i].label;
+      const overlapX = Math.abs((a.x + a.w / 2) - (b.x + b.w / 2)) < (a.w + b.w) / 2 + 8;
+      const overlapY = Math.abs(a.y - b.y) < Math.max(a.h, b.h) + 4;
+      if (overlapX && overlapY) b.y = a.y + a.h + 6;
+    }
+  }
 }
 
 /* ---------------------------- SVG rendering ---------------------------- */
@@ -309,11 +435,39 @@ function renderSvg(graph, laid, title) {
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
     `width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${esc(FONT)}">`);
 
-  // one arrowhead marker per edge kind
+  // Dedup icons: the same data URI used to be inlined on every node. A real
+  // account scan was 56% duplicate bytes. One <symbol> per unique URI, then
+  // <use href="#ico-N"> at each placement.
+  const iconIds = new Map();
+  const addIcon = uri => {
+    if (!uri || iconIds.has(uri)) return;
+    iconIds.set(uri, `ico-${iconIds.size}`);
+  };
+  for (const n of laid.nodes) { addIcon(n.icon); addIcon(n.osIcon); }
+  for (const c of laid.containers) addIcon(c.icon);
+
   const kinds = [...new Set([...graph.edges.map(e => e.kind || 'default'), 'default'])];
-  parts.push(`<defs>${kinds.map(k =>
-    `<marker id="arrow-${k}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">` +
-    `<path d="M0,0.6 L9.5,5 L0,9.4 z" fill="${edgeStyle(k).color}"/></marker>`).join('')}</defs>`);
+  parts.push('<defs>');
+  for (const k of kinds) {
+    parts.push(`<marker id="arrow-${k}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">` +
+      `<path d="M0,0.6 L9.5,5 L0,9.4 z" fill="${edgeStyle(k).color}"/></marker>`);
+  }
+  for (const [uri, id] of iconIds) {
+    parts.push(`<symbol id="${id}" viewBox="0 0 64 64">` +
+      `<image href="${esc(uri)}" width="64" height="64" preserveAspectRatio="xMidYMid meet"/></symbol>`);
+  }
+  parts.push('</defs>');
+  parts.push(`<style>
+    .flow{fill:none;stroke:#111418;stroke-width:2.6;stroke-linecap:round;stroke-dasharray:10 8;animation:bp-flow .8s linear infinite;opacity:.95;pointer-events:none}
+    @keyframes bp-flow{to{stroke-dashoffset:-18}}
+    @media (prefers-reduced-motion:reduce){.flow{animation:none;opacity:0}}
+  </style>`);
+  const useIcon = (uri, x, y, size) => {
+    const id = iconIds.get(uri);
+    return id
+      ? `<use href="#${id}" x="${r(x)}" y="${r(y)}" width="${size}" height="${size}"/>`
+      : '';
+  };
   parts.push(`<rect class="bg" x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`);
   parts.push(`<g id="viewport" transform="translate(${pad},${pad})">`);
 
@@ -338,7 +492,7 @@ function renderSvg(graph, laid, title) {
         `text-anchor="middle" fill="${st.stroke}">IGW</text></g>`;
     }
     headers.push(`<g>` +
-      (c.icon ? `<image href="${c.icon}" x="${r(c.x)}" y="${r(c.y)}" width="${iconSize}" height="${iconSize}"/>` : '') +
+      (c.icon ? useIcon(c.icon, c.x, c.y, iconSize) : '') +
       `<text x="${r(tx)}" y="${r(c.y + 17.5)}" font-size="12.5" font-weight="600" fill="${st.stroke}">${esc(c.label)}</text>${igwChip}</g>`);
   }
 
@@ -348,12 +502,18 @@ function renderSvg(graph, laid, title) {
     if (!e.points || e.points.length < 2) continue;
     const meta = edgeMeta.get(e.id) || {};
     const st = edgeStyle(meta.kind);
-    parts.push(`<g class="edge" data-from="${esc(meta.from || '')}" data-to="${esc(meta.to || '')}" ` +
-      `data-kind="${esc(meta.kind || '')}" data-label="${esc(meta.label || '')}">`);
+    const diffEdge = meta.diffStatus ? ` ${meta.diffStatus}` : '';
+    const eColor = meta.diffStatus === 'added' ? '#1D8102'
+      : meta.diffStatus === 'removed' ? '#D13212' : st.color;
+    const eDash = meta.diffStatus === 'removed' ? '4 3' : st.dash;
+    parts.push(`<g class="edge${diffEdge}" data-from="${esc(meta.from || '')}" data-to="${esc(meta.to || '')}" ` +
+      `data-kind="${esc(meta.kind || '')}" data-label="${esc(meta.label || '')}" data-diff="${esc(meta.diffStatus || '')}">`);
     // invisible wide stroke = a comfortable click target
     parts.push(`<path class="hit" d="${roundedPath(e.points)}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>`);
-    parts.push(`<path class="vis" d="${roundedPath(e.points)}" fill="none" stroke="${st.color}" stroke-width="1.6"` +
-      `${st.dash ? ` stroke-dasharray="${st.dash}"` : ''} marker-end="url(#arrow-${meta.kind || 'default'})"/>`);
+    const d = roundedPath(e.points);
+    parts.push(`<path class="vis" d="${d}" fill="none" stroke="${eColor}" stroke-width="1.6"` +
+      `${eDash ? ` stroke-dasharray="${eDash}"` : ''} marker-end="url(#arrow-${meta.kind || 'default'})"/>`);
+    parts.push(`<path class="flow" d="${d}" fill="none"/>`);
     if (e.label) {
       const { x, y, w, h, text } = e.label;
       parts.push(`<rect class="el" x="${r(x - 3)}" y="${r(y - 1)}" width="${r(w + 6)}" height="${r(h + 2)}" rx="9" ` +
@@ -367,19 +527,32 @@ function renderSvg(graph, laid, title) {
   // 3. Nodes as cards, so connectors visibly attach to something.
   for (const n of laid.nodes) {
     const cx = n.x + n.w / 2;
-    parts.push(`<g class="node" data-id="${esc(n.id)}" data-service="${esc(n.sublabel)}" data-label="${esc(n.label)}">`);
-    parts.push(`<title>${esc(n.label)} — ${esc(n.sublabel)}${n.untagged ? ' (referenced, not tagged)' : ''}</title>`);
-    parts.push(`<rect class="card${n.untagged || n.kind === 'internet' ? ' ref' : ''}" ` +
+    const diffClass = n.diffStatus ? ` ${n.diffStatus}` : '';
+    const DIFF_STROKE = { added: '#1D8102', removed: '#D13212', changed: '#C67B00' };
+    parts.push(`<g class="node${diffClass}" tabindex="0" role="img" aria-label="${esc(n.label)} ${esc(n.sublabel)}" data-id="${esc(n.id)}" data-service="${esc(n.sublabel)}" data-label="${esc(n.label)}" data-diff="${esc(n.diffStatus || '')}">`);
+    parts.push(`<title>${esc(n.label)} — ${esc(n.sublabel)}${n.untagged ? ' (referenced, not tagged)' : ''}${n.diffStatus ? ` · ${n.diffStatus}` : ''}</title>`);
+    const ghost = n.untagged || n.kind === 'internet' || n.kind === 'internet-egress' || n.diffStatus === 'removed';
+    const stroke = DIFF_STROKE[n.diffStatus] || (ghost ? '#8D99A8' : '#D9DEE4');
+    const dash = (n.diffStatus === 'removed' || ghost && !n.diffStatus) ? '4 3' : '';
+    const sw = n.diffStatus ? '2.2' : '1.2';
+    parts.push(`<rect class="card${ghost ? ' ref' : ''}${diffClass}" ` +
       `x="${r(n.x)}" y="${r(n.y)}" width="${r(n.w)}" height="${r(n.h)}" rx="9" fill="#ffffff" ` +
-      (n.untagged || n.kind === 'internet'
-        ? `stroke="#8D99A8" stroke-dasharray="4 3" stroke-width="1.2"/>`
-        : `stroke="#D9DEE4" stroke-width="1.2"/>`));
-    const sub = n.sublabel !== n.label ? `${n.sublabel}${n.untagged ? ' (ref)' : ''}` : (n.untagged ? '(ref)' : '');
+      `stroke="${stroke}" stroke-width="${sw}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
+    const subRaw = n.sublabel !== n.label ? `${n.sublabel}${n.untagged ? ' (ref)' : ''}` : (n.untagged ? '(ref)' : '');
+    const sub = fitSublabel(subRaw);
     const lines = nodeLines(n.label);
-    const two = lines.length > 1;
-    parts.push(`<image href="${n.icon}" x="${r(cx - ICON / 2)}" y="${r(n.y + 10)}" width="${ICON}" height="${ICON}"/>`);
-    parts.push(`<text class="tl" x="${r(cx)}" y="${r(n.y + (two ? 67 : (sub ? 71 : 78)))}" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0F141A">${esc(lines[0])}</text>`);
-    if (two) parts.push(`<text class="tl" x="${r(cx)}" y="${r(n.y + 81)}" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0F141A">${esc(lines[1])}</text>`);
+    parts.push(useIcon(n.icon, cx - ICON / 2, n.y + 10, ICON));
+    if (n.osIcon) {
+      const bx = n.x + 8, by = n.y + 8;
+      parts.push(`<g><title>${esc(n.osLabel || 'OS')}</title>` +
+        `<rect x="${r(bx - 2)}" y="${r(by - 2)}" width="${OS_BADGE + 4}" height="${OS_BADGE + 4}" rx="5" ` +
+        `fill="#ffffff" stroke="#D9DEE4" stroke-width="1"/>` +
+        useIcon(n.osIcon, bx, by, OS_BADGE) + `</g>`);
+    }
+    const line0Y = n.y + 66;
+    for (let i = 0; i < lines.length; i++) {
+      parts.push(`<text class="tl" x="${r(cx)}" y="${r(line0Y + i * 13)}" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0F141A">${esc(lines[i])}</text>`);
+    }
     if (sub) parts.push(`<text class="ts" x="${r(cx)}" y="${r(n.y + n.h - 9)}" font-size="9.5" text-anchor="middle" fill="#5F6B7A">${esc(sub)}</text>`);
     if (n.open) {
       // "open to internet" badge: little orange globe in the card corner
@@ -433,10 +606,12 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
 
   // Per-node details for the inspector panel, keyed by node id (= ARN).
   const resByArn = new Map(((scan && scan.resources) || []).map(r => [r.arn, r]));
+  const changeByArn = new Map((scan?.diff?.changed || []).map(c => [c.resource.arn || c.resource.id, c]));
   const details = {};
   for (const n of graph.nodes) {
     const res = resByArn.get(n.id) || {};
     const sn = res.subnetId && scan?.subnets?.[res.subnetId];
+    const ch = changeByArn.get(n.id);
     details[n.id] = {
       label: n.label, sublabel: n.sublabel, arn: n.id,
       region: res.region || '', az: res.az || sn?.az || '',
@@ -447,11 +622,14 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
       extra: res.extra || {},
       securityGroups: res.extra?.securityGroups || [],
       untagged: !!n.untagged, open: n.open || '',
+      diffStatus: n.diffStatus || '',
+      changes: ch?.fields || [],
+      exposure: !!ch?.exposure,
     };
   }
   const detailsJson = JSON.stringify(details).replace(/</g, '\\u003c');
   const legendHtml = graph.legend.map(l =>
-    `<div class="legend-item"><img src="${l.icon}" width="22" height="22"/><span>${esc(l.label)}</span></div>`).join('');
+    `<div class="legend-item"><img src="${esc(l.icon)}" width="22" height="22"/><span>${esc(l.label)}</span></div>`).join('');
 
   const subnetHtml = (graph.subnets || []).map(sn => {
     const c = sn.public ? '#7AA116' : '#00A4A6';
@@ -468,10 +646,29 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
     flowHtml += `<div class="legend-item"><span class="dot" style="background:#DD6B10"></span>` +
       `<span>Open to the internet (0.0.0.0/0) · ${s.open} resource${s.open === 1 ? '' : 's'}</span></div>`;
   }
+  if (flowHtml) {
+    flowHtml += `<div class="legend-item"><span class="line" style="background:#067F68"></span><span>Outbound from selected</span></div>` +
+      `<div class="legend-item"><span class="line" style="background:#0972D3"></span><span>Inbound to selected</span></div>`;
+  }
 
-  const resourceList = graph.nodes.filter(n => !n.untagged && n.kind !== 'internet')
+  const resourceList = graph.nodes.filter(n => !n.untagged && n.kind !== 'internet' && n.kind !== 'internet-egress')
     .sort((a, b) => a.sublabel.localeCompare(b.sublabel) || a.label.localeCompare(b.label))
-    .map(n => `<li data-id="${esc(n.id)}" data-label="${esc(n.label)}"><img src="${n.icon}" width="18" height="18"/><span>${esc(n.label)}</span><em>${esc(n.sublabel)}</em></li>`).join('');
+    .map(n => `<li data-id="${esc(n.id)}" data-label="${esc(n.label)}" data-diff="${esc(n.diffStatus || '')}"><img src="${esc(n.icon)}" width="18" height="18"/><span>${esc(n.label)}</span>${n.diffStatus ? `<i class="dmark ${esc(n.diffStatus)}">${n.diffStatus === 'added' ? '+' : n.diffStatus === 'removed' ? '−' : '~'}</i>` : ''}<em>${esc(n.sublabel)}</em></li>`).join('');
+
+  const dsum = scan?.diff?.summary;
+  const changesHtml = dsum ? buildChangesHtml(scan.diff, graph) : '';
+  const diffFilters = dsum
+    ? `<span class="diff-filters" role="group" aria-label="Filter by change">
+        <button type="button" data-diff-filter="all" class="on">All changes</button>
+        <button type="button" data-diff-filter="added">Added (${dsum.added})</button>
+        <button type="button" data-diff-filter="removed">Removed (${dsum.removed})</button>
+        <button type="button" data-diff-filter="changed">Changed (${dsum.changed})</button>
+      </span>` : '';
+  const diffStats = dsum
+    ? `<span class="diff-stat added"><b>+${dsum.added}</b></span>
+       <span class="diff-stat removed"><b>−${dsum.removed}</b></span>
+       <span class="diff-stat changed"><b>~${dsum.changed}</b></span>`
+    : '';
 
   const meta = graph.meta || {};
   const sub = `${meta.tagKey ? `tag <code>${esc(meta.tagKey)}${meta.tagValue ? '=' + esc(meta.tagValue) : ''}</code>` : ''}` +
@@ -485,10 +682,12 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
 <style>
   :root { --ink:#16191F; --squid:#232F3E; --line:#E4E8EB; --accent:#FF9900;
     --bg:#F2F3F3; --panel:#ffffff; --panel2:#FAFBFB; --mut:#687078; --dim:#879196;
-    --stage:#FAFBFB; --grid:#0000000a; --hover:#F2F3F3; --chip:#EDF3F7; --chipline:#D9E4EC; }
+    --stage:#FAFBFB; --grid:#0000000a; --hover:#F2F3F3; --chip:#EDF3F7; --chipline:#D9E4EC;
+    --flow:#111418; }
   [data-theme="dark"] { --ink:#E6EDF3; --squid:#04070C; --line:#1B2735; --accent:#00E5A0;
     --bg:#05080D; --panel:#0B121C; --panel2:#0E1622; --mut:#93A3B8; --dim:#5B6B80;
-    --stage:#04070C; --grid:#FFFFFF0d; --hover:#101A27; --chip:#101A27; --chipline:#2A3B52; }
+    --stage:#04070C; --grid:#FFFFFF0d; --hover:#101A27; --chip:#101A27; --chipline:#2A3B52;
+    --flow:#ffffff; }
   * { box-sizing: border-box; }
   .lic { width:1em; height:1em; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; vertical-align:-0.12em; }
   body { margin:0; font-family:"Segoe UI",Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
@@ -502,6 +701,7 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   .toolbar button { border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer; }
   .toolbar button:hover { background:var(--hover); }
   .toolbar button.primary { background:var(--squid); color:#fff; border-color:var(--squid); }
+  .toolbar button.on { background:var(--squid); color:#fff; border-color:var(--squid); }
   .export { position:relative; }
   .export-menu { position:absolute; top:calc(100% + 6px); left:0; z-index:20; min-width:220px;
     background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px;
@@ -542,9 +742,22 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   aside li em { margin-left:auto; color:var(--dim); font-style:normal; font-size:11px; }
   .hl { outline:3px solid var(--accent); outline-offset:2px; border-radius:6px; }
   #stage .node { cursor:pointer; }
+  #stage .node:focus { outline:none; }
+  #stage .node:focus .card { stroke:#DD344C; stroke-width:2; }
   #stage .edge { cursor:pointer; }
   #stage .edge:hover .vis { stroke-width:2.8; }
   #stage .edge.sel .vis { stroke-width:3; }
+  #stage .edge.in .vis { stroke:#0972D3; }
+  #stage .edge.out .vis { stroke:#067F68; }
+  #stage .edge .flow { stroke:var(--flow); stroke-width:2.8; stroke-dasharray:10 8; stroke-linecap:round;
+    animation:bp-flow .8s linear infinite; opacity:.95; pointer-events:none; }
+  #stage .edge.sel .flow, #stage .edge.in .flow, #stage .edge.out .flow { stroke-width:3.2; opacity:1; }
+  @keyframes bp-flow { to { stroke-dashoffset:-18; } }
+  @media (prefers-reduced-motion:reduce) { #stage .edge .flow { animation:none; opacity:0; } }
+  body.flow-off #stage .edge .flow { animation:none; opacity:0; }
+  body.egress-off #stage .edge[data-kind="internet-out"],
+  body.egress-off #stage .edge[data-kind="nat-egress"],
+  body.egress-off #stage .node[data-id="internet-egress"] { display:none; }
   .flow-item { cursor:pointer; border-radius:6px; padding:3px 4px !important; }
   .flow-item:hover { background:var(--hover); }
   .flow-item.on { background:var(--hover); outline:1px solid var(--line); }
@@ -558,6 +771,16 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   #detail .tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
   #detail .tag { font-size:10.5px; background:var(--chip); border:1px solid var(--chipline); border-radius:10px; padding:1px 8px; }
   #detail .close { float:right; border:none; background:none; font-size:15px; cursor:pointer; color:var(--dim); }
+  .diff-stat.added b { color:#1D8102; } .diff-stat.removed b { color:#D13212; } .diff-stat.changed b { color:#C67B00; }
+  .diff-filters { display:flex; gap:4px; flex-wrap:wrap; }
+  .diff-filters button.on { background:var(--squid); color:#fff; border-color:var(--squid); }
+  .dmark { font-style:normal; font-weight:700; font-size:12px; width:14px; text-align:center; }
+  .dmark.added, .chg.added { color:#1D8102; } .dmark.removed, .chg.removed { color:#D13212; } .dmark.changed, .chg.changed { color:#C67B00; }
+  #changes li { align-items:flex-start; }
+  #changes .why { display:block; font-size:10.5px; color:var(--dim); }
+  #detail .diff-banner { font-size:11.5px; font-weight:600; margin-bottom:8px; }
+  #detail .diff-banner.added { color:#1D8102; } #detail .diff-banner.removed { color:#D13212; } #detail .diff-banner.changed { color:#C67B00; }
+  #stage .node.added .card { stroke:#1D8102; } #stage .node.removed .card { stroke:#D13212; } #stage .node.changed .card { stroke:#C67B00; }
   footer { font-size:11px; color:var(--dim); padding:6px 14px; background:var(--panel); border-top:1px solid var(--line); }
 </style></head>
 <body>
@@ -568,6 +791,7 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
     <span><b>${s.resources}</b> resources</span>
     <span><b>${s.edges}</b> links</span>
     ${s.external ? `<span><b>${s.external}</b> referenced</span>` : ''}
+    ${diffStats}
   </div>
 </header>
 <div class="toolbar">
@@ -586,7 +810,10 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   <button id="zout">－</button>
   <input id="search" placeholder="Search resources…"/>
   <button id="themeToggle" title="Toggle light / dark">◐</button>
-  <span id="hint" style="font-size:12px;color:var(--dim)">drag to pan · scroll to zoom · click a resource to inspect</span>
+  <button id="flowToggle" class="on" title="Animate inbound / outbound flow on connectors" aria-pressed="true">Flow</button>
+  <button id="egressToggle" class="on" title="Show NAT and Internet egress (outbound)" aria-pressed="true">Outbound</button>
+  ${diffFilters}
+  <span id="hint" style="font-size:12px;color:var(--dim)">drag to pan · scroll to zoom · click a resource — green leaves, blue arrives</span>
 </div>
 <div class="layout">
   <div id="stage">${svg}${s.resources ? '' : `<div class="empty">
@@ -597,6 +824,7 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   </div>`}</div>
   <aside>
     <div id="detail" hidden></div>
+    ${changesHtml}
     ${flowHtml ? `<h2>Connectivity</h2>${flowHtml}` : ''}
     ${subnetHtml ? `<h2>Subnets</h2>${subnetHtml}` : ''}
     <h2>Services</h2>
@@ -605,20 +833,50 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
     <ul id="rlist">${resourceList}</ul>
   </aside>
 </div>
-<footer>blueprint_ by 3am_ · generated ${esc((graph.meta && graph.meta.generatedAt) || '')} · icons © Amazon Web Services</footer>
+<footer>3am_blueprint · generated ${esc((graph.meta && graph.meta.generatedAt) || '')} · icons © Amazon Web Services</footer>
 
 <script type="application/json" id="detail-data">${detailsJson}</script>
 <script type="application/json" id="export-data">${exportsJson}</script>
 <script>
 (function(){
   // ---- theme (query param from the app wins, then saved preference) ----
+  // Storage access throws in a sandboxed frame (opaque origin), so it is
+  // optional: the app always passes ?theme= explicitly.
+  const store = k => { try { return localStorage.getItem(k); } catch(e) { return null; } };
   const qTheme = new URLSearchParams(location.search).get('theme');
-  const theme0 = qTheme || localStorage.getItem('aa-theme') || 'light';
+  const theme0 = qTheme || store('aa-theme') || 'light';
   document.documentElement.dataset.theme = theme0 === 'dark' ? 'dark' : 'light';
   document.getElementById('themeToggle').onclick = () => {
     const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = t;
     try { localStorage.setItem('aa-theme', t); } catch(e){}
+  };
+  const flowBtn = document.getElementById('flowToggle');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let flowOn = !reduceMotion && store('aa-flow') !== 'off';
+  function applyFlow(){
+    document.body.classList.toggle('flow-off', !flowOn);
+    flowBtn.classList.toggle('on', flowOn);
+    flowBtn.setAttribute('aria-pressed', flowOn ? 'true' : 'false');
+  }
+  applyFlow();
+  flowBtn.onclick = ()=>{
+    flowOn = !flowOn;
+    try { localStorage.setItem('aa-flow', flowOn ? 'on' : 'off'); } catch(e){}
+    applyFlow();
+  };
+  const egressBtn = document.getElementById('egressToggle');
+  let egressOn = store('aa-egress') !== 'off';
+  function applyEgress(){
+    document.body.classList.toggle('egress-off', !egressOn);
+    egressBtn.classList.toggle('on', egressOn);
+    egressBtn.setAttribute('aria-pressed', egressOn ? 'true' : 'false');
+  }
+  applyEgress();
+  egressBtn.onclick = ()=>{
+    egressOn = !egressOn;
+    try { localStorage.setItem('aa-egress', egressOn ? 'on' : 'off'); } catch(e){}
+    applyEgress();
   };
 
   const stage = document.getElementById('stage');
@@ -654,6 +912,22 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   // search highlight
   const nodes = [...svg.querySelectorAll('.node')];
   const edges = [...svg.querySelectorAll('.edge')];
+  document.querySelectorAll('[data-diff-filter]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const f = btn.dataset.diffFilter;
+      document.querySelectorAll('[data-diff-filter]').forEach(b=> b.classList.toggle('on', b===btn));
+      nodes.forEach(n=>{
+        const st = n.dataset.diff;
+        const hit = f==='all' ? !!st : st===f;
+        n.style.opacity = hit ? 1 : 0.18;
+        n.classList.toggle('hl', hit);
+      });
+      edges.forEach(g=>{
+        const st = g.dataset.diff;
+        g.style.opacity = (f==='all' ? !!st : st===f) ? 1 : 0.08;
+      });
+    };
+  });
   document.getElementById('search').addEventListener('input', e=>{
     const q = e.target.value.trim().toLowerCase();
     clearSelection();
@@ -669,9 +943,12 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   const panel = document.getElementById('detail');
   const escHtml = v => String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const KIND_LABELS = ${JSON.stringify(Object.fromEntries(Object.entries(EDGE_STYLE).map(([k, v]) => [k, v.label])))};
+  function clearEdgeFlow(){
+    edges.forEach(g=>{ g.classList.remove('sel','in','out'); g.style.opacity = 1; });
+  }
   function clearSelection(){
     nodes.forEach(n=>{ n.classList.remove('hl'); n.style.opacity = 1; });
-    edges.forEach(g=>{ g.classList.remove('sel'); g.style.opacity = 1; });
+    clearEdgeFlow();
     document.querySelectorAll('.flow-item').forEach(f=> f.classList.remove('on'));
     activeKind = null;
     panel.hidden = true;
@@ -680,7 +957,7 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   // ---- connector selection: click an edge to inspect it ----
   function selectEdge(g){
     clearSelection();
-    g.classList.add('sel');
+    g.classList.add('sel','out');
     edges.forEach(x=>{ if (x !== g) x.style.opacity = 0.1; });
     const ends = new Set([g.dataset.from, g.dataset.to]);
     nodes.forEach(n=>{ n.style.opacity = ends.has(n.dataset.id) ? 1 : 0.2; });
@@ -714,7 +991,7 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
       edges.forEach(g=>{
         const on = g.dataset.kind === kind;
         g.style.opacity = on ? 1 : 0.08;
-        if (on) { g.classList.add('sel'); touched.add(g.dataset.from); touched.add(g.dataset.to); }
+        if (on) { g.classList.add('sel','out'); touched.add(g.dataset.from); touched.add(g.dataset.to); }
       });
       nodes.forEach(n=>{ n.style.opacity = touched.has(n.dataset.id) ? 1 : 0.2; });
     };
@@ -737,9 +1014,13 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
   function select(id){
     const connected = new Set([id]);
     edges.forEach(g=>{
-      const on = g.dataset.from===id || g.dataset.to===id;
-      g.style.opacity = on ? 1 : 0.12;
-      if (on) { connected.add(g.dataset.from); connected.add(g.dataset.to); }
+      const out = g.dataset.from===id;
+      const inn = g.dataset.to===id;
+      g.classList.toggle('out', out);
+      g.classList.toggle('in', inn);
+      g.classList.toggle('sel', out || inn);
+      g.style.opacity = (out || inn) ? 1 : 0.12;
+      if (out || inn) { connected.add(g.dataset.from); connected.add(g.dataset.to); }
     });
     nodes.forEach(n=>{
       n.classList.toggle('hl', n.dataset.id===id);
@@ -752,17 +1033,28 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
     const d = details[id];
     if (!d) { panel.hidden = true; return; }
     const kv = (k,v,cls)=> v ? '<div class="kv"><b>'+k+'</b><span'+(cls?' class="'+cls+'"':'')+'>'+escHtml(v)+'</span></div>' : '';
+    const inbound = edges.filter(g=> g.dataset.to===id).length;
+    const outbound = edges.filter(g=> g.dataset.from===id).length;
     const extras = Object.entries(d.extra||{})
       .filter(([k,v])=> k!=='securityGroups' && v!=null && v!=='')
       .map(([k,v])=> kv(k.replace(/([A-Z])/g,' $1').toLowerCase(), Array.isArray(v)? v.join(', ') : v)).join('');
     const tags = Object.entries(d.tags||{}).map(([k,v])=>
       '<span class="tag" title="'+escHtml(k)+'">'+escHtml(k)+'='+escHtml(v)+'</span>').join('');
+    const DIFF_WORD = { added:'Added since last scan', removed:'Removed since last scan', changed:'Changed since last scan' };
+    const show = v => v==null||v==='' ? '—' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+    const changeRows = (d.changes||[]).map(f =>
+      kv(escHtml(f.path), show(f.from) + ' → ' + show(f.to))
+    ).join('');
     panel.innerHTML =
       '<button class="close" title="Close">✕</button>' +
       '<h3>'+escHtml(d.label)+'</h3><div class="svc">'+escHtml(d.sublabel)+(d.untagged?' · referenced (not tagged)':'')+'</div>' +
-      kv('ARN', d.arn!=='internet' ? d.arn : '') +
+      (d.diffStatus ? '<div class="diff-banner '+escHtml(d.diffStatus)+'">'+escHtml(DIFF_WORD[d.diffStatus]||d.diffStatus)+(d.exposure?' · new exposure':'')+'</div>' : '') +
+      changeRows +
+      kv('ARN', (d.arn!=='internet' && d.arn!=='internet-egress') ? d.arn : '') +
       kv('Region', d.region) + kv('AZ', d.az) + kv('Subnet', d.subnet) + kv('VPC', d.vpc) +
       kv('State', d.state) +
+      kv('Inbound', inbound ? inbound + (inbound===1?' link → here':' links → here') : '') +
+      kv('Outbound', outbound ? outbound + (outbound===1?' link leaves':' links leave') : '') +
       kv('Open to net', d.open, 'warn') +
       kv('Sec. groups', (d.securityGroups||[]).join(', ')) +
       extras +
@@ -789,24 +1081,45 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
     setTimeout(()=> svg.classList.remove('anim'), 400);
   });
   // sidebar click -> same selection
-  document.querySelectorAll('#rlist li').forEach(li=>{
+  document.querySelectorAll('#rlist li, #changes li').forEach(li=>{
     li.onclick = ()=> select(li.dataset.id);
+    li.tabIndex = 0;
+    li.onkeydown = e=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); select(li.dataset.id); } };
+  });
+  nodes.forEach(n=>{
+    n.addEventListener('keydown', e=>{
+      if (e.key==='Enter' || e.key===' ') { e.preventDefault(); select(n.dataset.id); }
+    });
+  });
+  document.addEventListener('keydown', e=>{
+    if (e.target.closest('input,textarea,select,button,a')) return;
+    const ids = nodes.map(n => n.dataset.id);
+    if (!ids.length) return;
+    if (e.key === 'Escape') { clearSelection(); return; }
+    if (!['ArrowRight','ArrowDown','ArrowLeft','ArrowUp'].includes(e.key)) return;
+    e.preventDefault();
+    let i = nodes.findIndex(n => n.classList.contains('hl'));
+    if (i < 0) i = 0;
+    else i = (e.key==='ArrowRight' || e.key==='ArrowDown') ? (i+1)%ids.length : (i-1+ids.length)%ids.length;
+    select(ids[i]);
+    nodes[i].focus();
   });
 
   // ---- downloads ----
   const isDark = ()=> document.documentElement.dataset.theme === 'dark';
-  function serialize(){
+  function serialize(opts = {}){
     const clone = svg.cloneNode(true);
     clone.style.transform=''; clone.removeAttribute('style');
     clone.querySelectorAll('[style]').forEach(el=> el.removeAttribute('style'));   // drop selection dimming
     clone.querySelectorAll('.hl').forEach(el=> el.classList.remove('hl'));
     clone.querySelectorAll('.hit').forEach(el=> el.remove());                      // click targets aren't content
+    if (opts.still) clone.querySelectorAll('.flow').forEach(el=> el.remove());     // freeze PNG (no mid-dash snapshot)
     clone.querySelectorAll('.edge.sel').forEach(el=> el.classList.remove('sel'));
     if (isDark()) {
       // bake the dark theme into the exported file
       const st = document.createElementNS('http://www.w3.org/2000/svg','style');
       st.textContent = '.bg{fill:#04070C}.card{fill:#0E1622}.card:not(.ref){stroke:#22334A}' +
-        '.tl{fill:#E6EDF3}.ts{fill:#93A3B8}.el{fill:#0B121C}';
+        '.tl{fill:#E6EDF3}.ts{fill:#93A3B8}.el{fill:#0B121C}.flow{stroke:#ffffff}';
       clone.insertBefore(st, clone.firstChild);
     }
     return '<?xml version="1.0" encoding="UTF-8"?>\\n' + new XMLSerializer().serializeToString(clone);
@@ -822,7 +1135,7 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
     triggerDownload(URL.createObjectURL(blob), 'aws-architecture.svg');
   }
   function downloadPng(){
-    const data = serialize();
+    const data = serialize({ still: true });
     const img = new Image();
     const url = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(data)));
     img.onload = ()=>{
@@ -860,6 +1173,31 @@ function renderHtml(graph, svg, title, scan, exports = {}) {
 })();
 </script>
 </body></html>`;
+}
+
+function buildChangesHtml(diff, graph) {
+  const byId = new Map(graph.nodes.map(n => [n.id, n]));
+  const row = (status, key, r, why) => {
+    const n = byId.get(key);
+    const label = n?.label || r?.name || r?.id || key;
+    const sub = n?.sublabel || [r?.service, r?.type].filter(Boolean).join(':');
+    const icon = n?.icon || '';
+    const mark = status === 'added' ? '+' : status === 'removed' ? '−' : '~';
+    return `<li data-id="${esc(key)}" data-diff="${esc(status)}" class="chg ${esc(status)}">` +
+      (icon ? `<img src="${esc(icon)}" width="18" height="18"/>` : '') +
+      `<span>${esc(label)}${why ? `<small class="why">${esc(why)}</small>` : ''}</span>` +
+      `<i class="dmark ${esc(status)}">${mark}</i>` +
+      `<em>${esc(sub)}</em></li>`;
+  };
+  const items = [];
+  for (const r of diff.added || []) items.push(row('added', r.arn || r.id, r, 'new resource'));
+  for (const r of diff.removed || []) items.push(row('removed', r.arn || r.id, r, 'gone'));
+  for (const ch of diff.changed || []) {
+    const why = ch.fields.map(f => f.path).slice(0, 4).join(', ') + (ch.exposure ? ' · exposure' : '');
+    items.push(row('changed', ch.resource.arn || ch.resource.id, ch.resource, why));
+  }
+  if (!items.length) return '';
+  return `<h2>Changes (${items.length})</h2><ul id="changes">${items.join('')}</ul>`;
 }
 
 /* ---------------------------- helpers ---------------------------- */

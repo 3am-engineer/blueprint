@@ -15,10 +15,12 @@ import {
   ResourceGroupsTaggingAPIClient, GetResourcesCommand,
 } from '@aws-sdk/client-resource-groups-tagging-api';
 import {
-  EC2Client, DescribeInstancesCommand, DescribeVpcsCommand,
+  EC2Client, DescribeInstancesCommand, DescribeImagesCommand, DescribeVpcsCommand,
   DescribeSubnetsCommand, DescribeRegionsCommand, DescribeNatGatewaysCommand,
   DescribeInternetGatewaysCommand, DescribeSecurityGroupsCommand,
+  DescribeRouteTablesCommand,
 } from '@aws-sdk/client-ec2';
+import { detectOs } from './os-icons.js';
 import {
   ElastiCacheClient, DescribeCacheClustersCommand, DescribeCacheSubnetGroupsCommand,
 } from '@aws-sdk/client-elasticache';
@@ -44,10 +46,35 @@ import {
 } from '@aws-sdk/client-iam';
 import { S3Client, GetBucketNotificationConfigurationCommand, GetBucketPolicyCommand } from '@aws-sdk/client-s3';
 import { AutoScalingClient, DescribeAutoScalingGroupsCommand } from '@aws-sdk/client-auto-scaling';
-import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
+import { STSClient, GetCallerIdentityCommand, AssumeRoleCommand } from '@aws-sdk/client-sts';
+import { drain, chunk, mapLimit, dedupeEdges, withRetry } from './aws-paging.js';
+import { applyRouteTables, addOutboundEdges } from './routes.js';
+import {
+  parseArn, sqsQueueUrl, s3BucketArn, partitionOf, idKey, isInternetCidr,
+} from './aws-ids.js';
+import {
+  discoverUntagged, enrichAurora, enrichClassicElb, enrichEventBridge,
+  enrichApiGateway, enrichStepFunctions, enrichDynamo, enrichRoute53, clientFactories,
+} from './discover.js';
+import {
+  EventBridgeClient,
+} from '@aws-sdk/client-eventbridge';
+import { ApiGatewayV2Client } from '@aws-sdk/client-apigatewayv2';
+import { APIGatewayClient } from '@aws-sdk/client-api-gateway';
+import { SFNClient } from '@aws-sdk/client-sfn';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { ElasticLoadBalancingClient } from '@aws-sdk/client-elastic-load-balancing';
+import { Route53Client } from '@aws-sdk/client-route-53';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+/** Wrap an SDK client so every `.send()` backs off on throttling. */
+function retrying(client) {
+  const orig = client.send.bind(client);
+  client.send = (command, options) => withRetry(() => orig(command, options));
+  return client;
+}
 
 /**
  * Build an SDK credentials option from either inline (temporary) credentials
@@ -99,24 +126,17 @@ function readProfileRegion(profile) {
   return null;
 }
 
-/** arn:partition:service:region:account:resourceType/resourceId (or :resourceId). */
-export function parseArn(arn) {
-  const p = arn.split(':');
-  const service = p[2];
-  const region = p[3];
-  const account = p[4];
-  let type = '', id = p.slice(5).join(':');
-  const rest = p.slice(5).join(':');
-  if (rest.includes('/')) {
-    const idx = rest.indexOf('/');
-    type = rest.slice(0, idx);
-    id = rest.slice(idx + 1);
-  } else if (p.length > 6) {
-    type = p[5]; id = p.slice(6).join(':');
-  } else {
-    type = ''; id = rest;
-  }
-  return { service, region, account, type, id, arn };
+export { parseArn } from './aws-ids.js';
+
+/**
+ * Resolve a target-group member to a scanned resource.
+ * `Target.Id` is an instance id, a private IP (IP-mode / pod targets), or an
+ * ARN (Lambda, another load balancer).
+ */
+export function resolveLbTarget(tid, { byId, byArn, byIp, region }) {
+  if (!tid) return null;
+  return (region && byId.get(idKey(region, tid))) ||
+    byId.get(tid) || byArn.get(tid) || byIp.get(tid) || null;
 }
 
 function nameFromTags(tags) {
@@ -124,17 +144,23 @@ function nameFromTags(tags) {
   return t ? (t.Value || t.value) : undefined;
 }
 
+/** Regions scanned at once. Kept modest so an all-regions sweep does not
+ *  trip AWS request throttling, which would cost more than it saves. */
+const REGION_CONCURRENCY = 6;
+
 async function resolveRegions(args) {
-  if (args.region?.length) return args.region;
+  // --all-regions wins over an explicit --region list (web UI may send both).
   if (args.allRegions) {
     try {
-      const ec2 = new EC2Client({ region: 'us-east-1', ...creds(authOf(args)) });
+      const probe = args.region?.[0] || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
+      const ec2 = retrying(new EC2Client({ region: probe, ...creds(authOf(args)) }));
       const r = await ec2.send(new DescribeRegionsCommand({ AllRegions: false }));
       return r.Regions.map(x => x.RegionName).sort();
     } catch (e) {
       console.error('  ! could not list regions, falling back to us-east-1:', e.message);
     }
   }
+  if (args.region?.length) return args.region;
   const envRegion = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
   const profileRegion = readProfileRegion(args.profile);
   const region = envRegion || profileRegion || 'us-east-1';
@@ -144,7 +170,30 @@ async function resolveRegions(args) {
   return [region];
 }
 
-export async function scanAws(args) {
+async function assumeRoleIfRequested(args) {
+  if (!args.roleArn) return args;
+  const region = args.region?.[0] || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
+  const sts = retrying(new STSClient({ region, ...creds(authOf(args)) }));
+  const r = await sts.send(new AssumeRoleCommand({
+    RoleArn: args.roleArn,
+    RoleSessionName: 'blueprint-scan',
+    ExternalId: args.externalId || undefined,
+    DurationSeconds: 3600,
+  }));
+  const c = r.Credentials;
+  console.error(`  • assumed ${args.roleArn}`);
+  return {
+    ...args,
+    credentials: {
+      accessKeyId: c.AccessKeyId,
+      secretAccessKey: c.SecretAccessKey,
+      sessionToken: c.SessionToken,
+    },
+  };
+}
+
+export async function scanAws(input) {
+  const args = await assumeRoleIfRequested(input);
   const regions = await resolveRegions(args);
   const tagKey = args.tag;
   const tagValue = args.value;
@@ -161,29 +210,82 @@ export async function scanAws(args) {
   };
 
   try {
-    const sts = new STSClient({ region: regions[0], ...creds(authOf(args)) });
+    const sts = retrying(new STSClient({ region: regions[0], ...creds(authOf(args)) }));
     const who = await sts.send(new GetCallerIdentityCommand({}));
     scan.meta.accountId = who.Account;
+    if (who.Arn) scan.meta.partition = partitionOf(who.Arn);
   } catch (e) { /* non-fatal */ }
 
+  // Discovery runs across all regions before any enrichment, for two reasons:
+  // enrichment can then resolve edges whose target lives in a region scanned
+  // later (previously those were dropped depending on region order), and the
+  // tagging-API calls parallelise cleanly since each returns an independent list.
+  const discovered = await mapLimit(regions, REGION_CONCURRENCY, async region => {
+    try {
+      return { region, items: await getTaggedResources(region, tagKey, tagValue, authOf(args)) };
+    } catch (e) {
+      console.error(`  ! region ${region} discovery failed: ${e.message}`);
+      return { region, items: [] };
+    }
+  });
+
   const seen = new Set();
-  for (const region of regions) {
-    console.error(`  - region ${region}`);
-    const found = await getTaggedResources(region, tagKey, tagValue, authOf(args));
-    for (const item of found) {
+  for (const { region, items } of discovered) {
+    console.error(`  - region ${region}: ${items.length} tagged`);
+    for (const item of items) {
       if (seen.has(item.arn)) continue;
       seen.add(item.arn);
       const a = parseArn(item.arn);
+      if (!scan.meta.partition && a.partition) scan.meta.partition = a.partition;
       scan.resources.push({
         arn: item.arn, service: a.service, type: a.type, id: a.id,
-        region: a.region || region, account: a.account,
+        region: a.region || region, account: a.account, partition: a.partition,
         name: nameFromTags(item.tags) || a.id,
         tags: Object.fromEntries((item.tags || []).map(t => [t.Key, t.Value])),
         extra: {},
       });
     }
-    await enrichRegion(region, scan, authOf(args));
   }
+
+  // Account / VPC scope: the tagging API cannot see untagged resources, so
+  // also list the common architecture services directly.
+  if (!tagKey) {
+    console.error('  • listing untagged resources in common services');
+    await mapLimit(regions, REGION_CONCURRENCY, async region => {
+      try {
+        const opts = { region, ...creds(authOf(args)) };
+        const before = scan.resources.length;
+        await discoverUntagged(region, scan, {
+          withRetry,
+          upsert: r => {
+            if (!r?.arn || seen.has(r.arn)) return;
+            seen.add(r.arn);
+            scan.resources.push(r);
+          },
+          client: clientFactories(opts, retrying),
+        });
+        const added = scan.resources.length - before;
+        if (added) console.error(`  - region ${region}: +${added} untagged`);
+      } catch (e) {
+        console.error(`  ! untagged discover ${region}: ${e.message}`);
+      }
+    });
+  }
+
+  // Only regions that actually turned something up need the (expensive)
+  // enrichment fan-out — an all-regions sweep is mostly empty regions.
+  const populated = [...new Set(scan.resources.map(r => r.region))]
+    .filter(r => regions.includes(r));
+  await mapLimit(populated, REGION_CONCURRENCY, async region => {
+    try {
+      await enrichRegion(region, scan, authOf(args));
+    } catch (e) {
+      console.error(`  ! region ${region} enrich failed: ${e.message}`);
+    }
+  });
+  // Concurrent enrichment can race the per-region "already have this edge"
+  // checks, so collapse duplicates once at the end.
+  scan.edges = dedupeEdges(scan.edges);
 
   // VPC scope: keep only resources that live in the chosen VPC.
   if (args.vpcId) {
@@ -193,9 +295,11 @@ export async function scanAws(args) {
       const sn = r.subnetId && scan.subnets[r.subnetId];
       if (((sn && sn.vpcId) || r.vpcId) === vid) keep.add(r.arn);
     }
+    const inet = id => id === 'internet' || id === 'internet-egress';
     scan.edges = scan.edges.filter(e =>
-      (keep.has(e.from) || e.from === 'internet') && keep.has(e.to));
-    if (scan.edges.some(e => e.from === 'internet')) keep.add('internet');
+      (keep.has(e.from) || inet(e.from)) && (keep.has(e.to) || inet(e.to)));
+    if (scan.edges.some(e => e.from === 'internet' || e.to === 'internet')) keep.add('internet');
+    if (scan.edges.some(e => e.from === 'internet-egress' || e.to === 'internet-egress')) keep.add('internet-egress');
     scan.resources = scan.resources.filter(r => keep.has(r.arn));
     scan.vpcs = Object.fromEntries(Object.entries(scan.vpcs).filter(([k]) => k === vid));
     scan.meta.vpcId = vid;
@@ -206,34 +310,40 @@ export async function scanAws(args) {
 }
 
 /** List VPCs visible to the given credentials (for the web UI's VPC picker). */
-export async function listVpcs(args) {
+export async function listVpcs(input) {
+  const args = await assumeRoleIfRequested(input);
   const regions = await resolveRegions(args);
-  const out = [];
-  for (const region of regions) {
+  const perRegion = await mapLimit(regions, REGION_CONCURRENCY, async region => {
     try {
-      const ec2 = new EC2Client({ region, ...creds(authOf(args)) });
-      const r = await ec2.send(new DescribeVpcsCommand({}));
-      for (const v of r.Vpcs || []) {
-        out.push({
-          id: v.VpcId, region, cidr: v.CidrBlock,
-          name: nameFromTags(v.Tags) || v.VpcId, isDefault: !!v.IsDefault,
-        });
-      }
-    } catch (e) { console.error(`  ! DescribeVpcs ${region}: ${e.message}`); }
-  }
-  return out;
+      const ec2 = retrying(new EC2Client({ region, ...creds(authOf(args)) }));
+      const vpcs = await drain(
+        NextToken => ec2.send(new DescribeVpcsCommand({ NextToken })),
+        p => p.Vpcs,
+        { nextKey: 'NextToken' },
+      );
+      return vpcs.map(v => ({
+        id: v.VpcId, region, cidr: v.CidrBlock,
+        name: nameFromTags(v.Tags) || v.VpcId, isDefault: !!v.IsDefault,
+      }));
+    } catch (e) {
+      console.error(`  ! DescribeVpcs ${region}: ${e.message}`);
+      return [];
+    }
+  });
+  return perRegion.flat();
 }
 
 /** Validate credentials and return the caller's account/ARN. Throws on failure. */
-export async function whoAmI(args) {
+export async function whoAmI(input) {
+  const args = await assumeRoleIfRequested(input);
   const region = args.region?.[0] || 'us-east-1';
-  const sts = new STSClient({ region, ...creds(authOf(args)) });
+  const sts = retrying(new STSClient({ region, ...creds(authOf(args)) }));
   const r = await sts.send(new GetCallerIdentityCommand({}));
   return { accountId: r.Account, arn: r.Arn };
 }
 
 async function getTaggedResources(region, tagKey, tagValue, auth) {
-  const client = new ResourceGroupsTaggingAPIClient({ region, ...creds(auth) });
+  const client = retrying(new ResourceGroupsTaggingAPIClient({ region, ...creds(auth) }));
   const out = [];
   let PaginationToken;
   do {
@@ -339,10 +449,24 @@ function cidrsOverlap(a, b) {
  *  Lambda, Auto Scaling — plus security-group-based traffic-flow edges. */
 async function enrichRegion(region, scan, auth) {
   const inRegion = scan.resources.filter(r => r.region === region);
-  const byId = new Map(scan.resources.map(r => [r.id, r]));
+  const byId = new Map();
+  for (const r of scan.resources) {
+    byId.set(idKey(r.region, r.id), r);
+    if (/^(i-|nat-|igw-)/.test(r.id)) byId.set(r.id, r);
+  }
+  const findById = id => byId.get(idKey(region, id)) || byId.get(id);
   const byArn = new Map(scan.resources.map(r => [r.arn, r]));
   const opts = { region, ...creds(auth) };
-  const ec2 = new EC2Client(opts);
+  const ec2 = retrying(new EC2Client(opts));
+  const upsert = r => {
+    if (!r?.arn) return;
+    if (byArn.has(r.arn)) return byArn.get(r.arn);
+    scan.resources.push(r);
+    byArn.set(r.arn, r);
+    byId.set(idKey(r.region, r.id), r);
+    if (/^(i-|nat-|igw-)/.test(r.id)) byId.set(r.id, r);
+    return r;
+  };
 
   // Track which security groups each resource belongs to, so we can turn
   // SG-to-SG ingress rules into resource-to-resource edges later.
@@ -391,23 +515,76 @@ async function enrichRegion(region, scan, auth) {
   const vpcIds = new Set(), subnetIds = new Set();
   if (instanceIds.length) {
     try {
-      for (let i = 0; i < instanceIds.length; i += 100) {
-        const chunk = instanceIds.slice(i, i + 100);
-        const r = await ec2.send(new DescribeInstancesCommand({ InstanceIds: chunk }));
-        for (const res of r.Reservations || []) for (const inst of res.Instances || []) {
-          const node = byId.get(inst.InstanceId);
+      for (const batch of chunk(instanceIds, 100)) {
+        const reservations = await drain(
+          NextToken => ec2.send(new DescribeInstancesCommand({ InstanceIds: batch, NextToken })),
+          p => p.Reservations,
+          { nextKey: 'NextToken' },
+        );
+        for (const res of reservations) for (const inst of res.Instances || []) {
+          const node = findById(inst.InstanceId);
           if (!node) continue;
           node.vpcId = inst.VpcId; node.subnetId = inst.SubnetId; node.az = inst.Placement?.AvailabilityZone;
           node.state = inst.State?.Name;
           node.extra.privateIp = inst.PrivateIpAddress;
+          const v6 = (inst.NetworkInterfaces || []).flatMap(n =>
+            (n.Ipv6Addresses || []).map(a => a.Ipv6Address)).filter(Boolean);
+          if (inst.Ipv6Address) v6.push(inst.Ipv6Address);
+          if (v6.length) node.extra.ipv6Addresses = [...new Set(v6)];
           node.extra.instanceType = inst.InstanceType;
           node.extra.instanceProfileArn = inst.IamInstanceProfile?.Arn;
+          node.extra.imageId = inst.ImageId;
+          node.extra.platform = inst.Platform;
+          node.extra.platformDetails = inst.PlatformDetails;
           attachSG(node, (inst.SecurityGroups || []).map(s => s.GroupId));
           if (inst.VpcId) vpcIds.add(inst.VpcId);
           if (inst.SubnetId) subnetIds.add(inst.SubnetId);
         }
       }
     } catch (e) { console.error(`    ! EC2 describe error: ${e.message}`); }
+  }
+
+  // ---- AMI metadata for OS detection ----
+  const imageIds = [...new Set(
+    inRegion.filter(r => r.service === 'ec2' && r.type === 'instance' && r.extra?.imageId)
+      .map(r => r.extra.imageId),
+  )];
+  const amiMeta = new Map();
+  if (imageIds.length) {
+    try {
+      for (const batch of chunk(imageIds, 100)) {
+        const images = await drain(
+          NextToken => ec2.send(new DescribeImagesCommand({ ImageIds: batch, NextToken })),
+          p => p.Images,
+          { nextKey: 'NextToken' },
+        );
+        for (const img of images) {
+          amiMeta.set(img.ImageId, {
+            name: img.Name,
+            description: img.Description,
+            platform: img.Platform,
+            platformDetails: img.PlatformDetails,
+          });
+        }
+      }
+    } catch (e) { console.error(`    ! AMI describe error: ${e.message}`); }
+  }
+  for (const r of inRegion) {
+    if (r.service !== 'ec2' || r.type !== 'instance' || !r.extra?.imageId) continue;
+    const ami = amiMeta.get(r.extra.imageId);
+    if (ami) {
+      r.extra.amiName = ami.name;
+      r.extra.amiDescription = ami.description;
+      if (!r.extra.platform) r.extra.platform = ami.platform;
+      if (!r.extra.platformDetails) r.extra.platformDetails = ami.platformDetails;
+    }
+    r.extra.os = detectOs({
+      imageId: r.extra.imageId,
+      platform: r.extra.platform,
+      platformDetails: r.extra.platformDetails,
+      amiName: r.extra.amiName,
+      amiDescription: r.extra.amiDescription,
+    });
   }
 
   // Also pull VPC/subnet ids for any tagged vpc/subnet resources.
@@ -449,7 +626,7 @@ async function enrichRegion(region, scan, auth) {
     try {
       const r = await ec2.send(new DescribeNatGatewaysCommand({ NatGatewayIds: natIds }));
       for (const nat of r.NatGateways || []) {
-        const node = byId.get(nat.NatGatewayId);
+        const node = findById(nat.NatGatewayId);
         if (!node) continue;
         node.vpcId = nat.VpcId; node.subnetId = nat.SubnetId;
       }
@@ -462,7 +639,7 @@ async function enrichRegion(region, scan, auth) {
     try {
       const r = await ec2.send(new DescribeInternetGatewaysCommand({ InternetGatewayIds: igwIds }));
       for (const igw of r.InternetGateways || []) {
-        const node = byId.get(igw.InternetGatewayId);
+        const node = findById(igw.InternetGatewayId);
         if (node) node.vpcId = igw.Attachments?.[0]?.VpcId;
       }
     } catch (e) { console.error(`    ! IGW describe error: ${e.message}`); }
@@ -470,28 +647,53 @@ async function enrichRegion(region, scan, auth) {
 
   // ---- ELBv2 load balancers -> targets ----
   const tgToLb = new Map();   // target-group ARN -> LB ARN (used by the ECS pass)
+  // IP-mode / pod-backed target groups report an address, not an instance id.
+  const byIp = new Map();
+  for (const r of scan.resources) {
+    if (r.extra?.privateIp) byIp.set(r.extra.privateIp, r);
+    for (const ip of r.extra?.ipv6Addresses || []) byIp.set(ip, r);
+  }
+  // LBs whose targets were only IPs we could not place — linked to an EKS
+  // cluster in the same VPC after that cluster's VPC is known.
+  const pendingIpLbs = [];
   const lbArns = inRegion.filter(r => r.service === 'elasticloadbalancing' && r.type === 'loadbalancer').map(r => r.arn);
   if (lbArns.length) {
     try {
-      const elb = new ElasticLoadBalancingV2Client(opts);
-      const lbs = await elb.send(new DescribeLoadBalancersCommand({ LoadBalancerArns: lbArns }));
-      for (const lb of lbs.LoadBalancers || []) {
+      const elb = retrying(new ElasticLoadBalancingV2Client(opts));
+      // DescribeLoadBalancers accepts at most 20 ARNs per request and rejects
+      // the whole call if you exceed it.
+      const loadBalancers = [];
+      for (const batch of chunk(lbArns, 20)) {
+        loadBalancers.push(...await drain(
+          Marker => elb.send(new DescribeLoadBalancersCommand({ LoadBalancerArns: batch, Marker })),
+          p => p.LoadBalancers,
+        ));
+      }
+      for (const lb of loadBalancers) {
         const node = byArn.get(lb.LoadBalancerArn);
         if (node) {
           node.vpcId = lb.VpcId; node.extra.scheme = lb.Scheme; node.extra.dns = lb.DNSName; node.extra.lbType = lb.Type;
           attachSG(node, lb.SecurityGroups);
         }
-        const tgs = await elb.send(new DescribeTargetGroupsCommand({ LoadBalancerArn: lb.LoadBalancerArn }));
-        for (const tg of tgs.TargetGroups || []) {
+        const targetGroups = await drain(
+          Marker => elb.send(new DescribeTargetGroupsCommand({ LoadBalancerArn: lb.LoadBalancerArn, Marker })),
+          p => p.TargetGroups,
+        );
+        let ipMiss = 0;
+        for (const tg of targetGroups) {
           tgToLb.set(tg.TargetGroupArn, lb.LoadBalancerArn);
           const health = await elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: tg.TargetGroupArn }));
           for (const th of health.TargetHealthDescriptions || []) {
             const tid = th.Target?.Id;
             if (!tid) continue;
-            let target = byId.get(tid);
+            let target = resolveLbTarget(tid, { byId, byArn, byIp, region });
             if (!target && /^i-/.test(tid)) target = ensureExternalInstance(scan, byId, tid, region);
             if (target) addEdge(lb.LoadBalancerArn, target.arn, tg.Protocol || 'forwards', 'lb-target');
+            else if (/^\d{1,3}(\.\d{1,3}){3}$/.test(tid)) ipMiss++;
           }
+        }
+        if (ipMiss && (node?.vpcId || lb.VpcId)) {
+          pendingIpLbs.push({ lbArn: lb.LoadBalancerArn, vpcId: node?.vpcId || lb.VpcId });
         }
       }
     } catch (e) { console.error(`    ! ELBv2 enrich error: ${e.message}`); }
@@ -501,9 +703,12 @@ async function enrichRegion(region, scan, auth) {
   const dbHasRds = inRegion.some(r => r.service === 'rds');
   if (dbHasRds) {
     try {
-      const rds = new RDSClient(opts);
-      const r = await rds.send(new DescribeDBInstancesCommand({}));
-      for (const db of r.DBInstances || []) {
+      const rds = retrying(new RDSClient(opts));
+      const instances = await drain(
+        Marker => rds.send(new DescribeDBInstancesCommand({ Marker })),
+        p => p.DBInstances,
+      );
+      for (const db of instances) {
         const node = scan.resources.find(n => n.service === 'rds' && (n.id === db.DBInstanceIdentifier || n.arn === db.DBInstanceArn));
         if (!node) continue;
         node.vpcId = db.DBSubnetGroup?.VpcId;
@@ -521,10 +726,13 @@ async function enrichRegion(region, scan, auth) {
   const cacheNodes = inRegion.filter(r => r.service === 'elasticache' && r.type === 'cluster');
   if (cacheNodes.length) {
     try {
-      const ecc = new ElastiCacheClient(opts);
-      const r = await ecc.send(new DescribeCacheClustersCommand({ ShowCacheNodeInfo: false }));
+      const ecc = retrying(new ElastiCacheClient(opts));
+      const clusters = await drain(
+        Marker => ecc.send(new DescribeCacheClustersCommand({ ShowCacheNodeInfo: false, Marker })),
+        p => p.CacheClusters,
+      );
       const subnetGroupCache = new Map();
-      for (const cc of r.CacheClusters || []) {
+      for (const cc of clusters) {
         const node = cacheNodes.find(n => n.id === cc.CacheClusterId || cc.ARN === n.arn);
         if (!node) continue;
         node.extra.engine = cc.Engine;
@@ -548,7 +756,7 @@ async function enrichRegion(region, scan, auth) {
   const efsNodes = inRegion.filter(r => r.service === 'elasticfilesystem' && r.type === 'file-system');
   if (efsNodes.length) {
     try {
-      const efs = new EFSClient(opts);
+      const efs = retrying(new EFSClient(opts));
       for (const node of efsNodes) {
         try {
           const mt = await efs.send(new DescribeMountTargetsCommand({ FileSystemId: node.id }));
@@ -569,7 +777,7 @@ async function enrichRegion(region, scan, auth) {
   const fns = inRegion.filter(r => r.service === 'lambda' && r.type === 'function');
   if (fns.length) {
     try {
-      const lambda = new LambdaClient(opts);
+      const lambda = retrying(new LambdaClient(opts));
       for (const fn of fns) {
         try {
           const c = await lambda.send(new GetFunctionConfigurationCommand({ FunctionName: fn.id }));
@@ -586,14 +794,23 @@ async function enrichRegion(region, scan, auth) {
   const asgs = inRegion.filter(r => r.service === 'autoscaling' && /autoScalingGroup/i.test(r.type));
   if (asgs.length) {
     try {
-      const as = new AutoScalingClient(opts);
+      const as = retrying(new AutoScalingClient(opts));
       const names = asgs.map(r => r.name || r.id.split('/').pop());
-      const r = await as.send(new DescribeAutoScalingGroupsCommand({ AutoScalingGroupNames: names }));
-      for (const g of r.AutoScalingGroups || []) {
+      const groups = [];
+      for (const batch of chunk(names, 50)) {
+        groups.push(...await drain(
+          NextToken => as.send(new DescribeAutoScalingGroupsCommand({
+            AutoScalingGroupNames: batch, NextToken,
+          })),
+          p => p.AutoScalingGroups,
+          { nextKey: 'NextToken' },
+        ));
+      }
+      for (const g of groups) {
         const node = asgs.find(x => (x.name || x.id).includes(g.AutoScalingGroupName));
         if (!node) continue;
         for (const inst of g.Instances || []) {
-          const target = byId.get(inst.InstanceId) || ensureExternalInstance(scan, byId, inst.InstanceId, region);
+          const target = findById(inst.InstanceId) || ensureExternalInstance(scan, byId, inst.InstanceId, region);
           addEdge(node.arn, target.arn, 'scales', 'asg-member');
         }
       }
@@ -604,7 +821,7 @@ async function enrichRegion(region, scan, auth) {
   const ecsServices = inRegion.filter(r => r.service === 'ecs' && r.type === 'service');
   if (ecsServices.length) {
     try {
-      const ecs = new ECSClient(opts);
+      const ecs = retrying(new ECSClient(opts));
       const byCluster = new Map();   // cluster name -> [service resources]
       for (const svc of ecsServices) {
         // arn:aws:ecs:region:acct:service/<cluster>/<service>
@@ -634,7 +851,8 @@ async function enrichRegion(region, scan, auth) {
               const lbArn = tgToLb.get(lb.targetGroupArn);
               if (lbArn) addEdge(lbArn, s.serviceArn, 'forwards', 'lb-target');
             }
-            const clusterArn = `arn:aws:ecs:${region}:${scan.meta.accountId || s.serviceArn.split(':')[4]}:cluster/${cluster}`;
+            const part = node.partition || scan.meta.partition || 'aws';
+            const clusterArn = `arn:${part}:ecs:${region}:${scan.meta.accountId || s.serviceArn.split(':')[4]}:cluster/${cluster}`;
             if (byArn.has(clusterArn)) addEdge(clusterArn, s.serviceArn, 'runs', 'asg-member');
           }
         }
@@ -646,7 +864,7 @@ async function enrichRegion(region, scan, auth) {
   const eksClusters = inRegion.filter(r => r.service === 'eks' && r.type === 'cluster');
   if (eksClusters.length) {
     try {
-      const eks = new EKSClient(opts);
+      const eks = retrying(new EKSClient(opts));
       for (const c of eksClusters) {
         try {
           const r = await eks.send(new DescribeClusterCommand({ name: c.id.split('/').pop() }));
@@ -662,15 +880,25 @@ async function enrichRegion(region, scan, auth) {
       }
     } catch (e) { console.error(`    ! EKS enrich error: ${e.message}`); }
   }
+  // IP-mode target groups on EKS never name an instance. Once the cluster
+  // has a VPC, draw one LB → cluster edge so the hop is not silently dropped.
+  for (const pending of pendingIpLbs) {
+    const cluster = eksClusters.find(c => c.vpcId && c.vpcId === pending.vpcId);
+    if (cluster) addEdge(pending.lbArn, cluster.arn, 'forwards (pods)', 'lb-target');
+  }
 
   // ---- Lambda event-source mappings + resource policy -> function edges ----
   if (fns.length) {
     try {
-      const lambda = new LambdaClient(opts);
+      const lambda = retrying(new LambdaClient(opts));
       for (const fn of fns) {
         try {
-          const r = await lambda.send(new ListEventSourceMappingsCommand({ FunctionName: fn.id }));
-          for (const m of r.EventSourceMappings || []) {
+          const mappings = await drain(
+            Marker => lambda.send(new ListEventSourceMappingsCommand({ FunctionName: fn.id, Marker })),
+            p => p.EventSourceMappings,
+            { nextKey: 'NextMarker' },
+          );
+          for (const m of mappings) {
             const src = m.EventSourceArn && byArn.get(m.EventSourceArn);
             if (src) addEdge(src.arn, fn.arn, 'triggers', 'event');
           }
@@ -688,10 +916,13 @@ async function enrichRegion(region, scan, auth) {
   const queues = inRegion.filter(r => r.service === 'sqs');
   if (queues.length) {
     try {
-      const sqs = new SQSClient(opts);
+      const sqs = retrying(new SQSClient(opts));
       for (const q of queues) {
         try {
-          const QueueUrl = `https://sqs.${region}.amazonaws.com/${q.account || scan.meta.accountId}/${q.id}`;
+          const QueueUrl = sqsQueueUrl(
+            q.partition || scan.meta.partition || 'aws',
+            region, q.account || scan.meta.accountId, q.id,
+          );
           const r = await sqs.send(new GetQueueAttributesCommand({ QueueUrl, AttributeNames: ['Policy'] }));
           if (r.Attributes?.Policy) applyPolicy(JSON.parse(r.Attributes.Policy), q);
         } catch { /* skip individual */ }
@@ -703,7 +934,7 @@ async function enrichRegion(region, scan, auth) {
   const topics = inRegion.filter(r => r.service === 'sns');
   if (topics.length) {
     try {
-      const sns = new SNSClient(opts);
+      const sns = retrying(new SNSClient(opts));
       for (const t of topics) {
         try {
           let NextToken;
@@ -729,7 +960,7 @@ async function enrichRegion(region, scan, auth) {
   const cfDists = inRegion.filter(r => r.service === 'cloudfront' && r.type === 'distribution');
   if (cfDists.length) {
     try {
-      const cf = new CloudFrontClient({ region: 'us-east-1', ...creds(auth) });   // CloudFront is global
+      const cf = retrying(new CloudFrontClient({ region: 'us-east-1', ...creds(auth) }));   // CloudFront is global
       for (const dist of cfDists) {
         try {
           const r = await cf.send(new GetDistributionCommand({ Id: dist.id }));
@@ -754,10 +985,14 @@ async function enrichRegion(region, scan, auth) {
             if (oai) oaiMap.set(String(oai).split('/').pop(), dist.arn);
             const label = (patterns.get(o.Id) || ['origin']).slice(0, 3).join(' · ');
             const dom = String(o.DomainName || '');
-            const s3Match = dom.match(/^([a-z0-9.-]+)\.s3[.-]/i) || dom.match(/^([a-z0-9.-]+)\.s3\.amazonaws\.com$/i);
-            if (s3Match && byArn.has(`arn:aws:s3:::${s3Match[1]}`)) {
-              addEdge(dist.arn, `arn:aws:s3:::${s3Match[1]}`, label, 'origin');
-              continue;
+            const s3Match = dom.match(/^([a-z0-9.-]+)\.s3[.-]/i)
+              || dom.match(/^([a-z0-9.-]+)\.s3\.amazonaws\.com(\.cn)?$/i);
+            if (s3Match) {
+              const bucketArn = s3BucketArn(dist.partition || scan.meta.partition || 'aws', s3Match[1]);
+              if (byArn.has(bucketArn)) {
+                addEdge(dist.arn, bucketArn, label, 'origin');
+                continue;
+              }
             }
             // custom origins: match against scanned load balancer DNS names
             const lb = scan.resources.find(x => x.extra?.dns && dom.toLowerCase() === x.extra.dns.toLowerCase());
@@ -775,7 +1010,7 @@ async function enrichRegion(region, scan, auth) {
   const buckets = inRegion.filter(r => r.service === 's3' && !r.type);
   if (buckets.length) {
     try {
-      const s3 = new S3Client({ region, followRegionRedirects: true, ...creds(auth) });
+      const s3 = retrying(new S3Client({ region, followRegionRedirects: true, ...creds(auth) }));
       for (const b of buckets) {
         // notifications -> Lambda / SQS / SNS event edges
         try {
@@ -807,7 +1042,7 @@ async function enrichRegion(region, scan, auth) {
   const certs = inRegion.filter(r => r.service === 'acm' && r.type === 'certificate');
   if (certs.length) {
     try {
-      const acm = new ACMClient(opts);
+      const acm = retrying(new ACMClient(opts));
       for (const c of certs) {
         try {
           const r = await acm.send(new DescribeCertificateCommand({ CertificateArn: c.arn }));
@@ -842,7 +1077,7 @@ async function enrichRegion(region, scan, auth) {
   }
   if (profileConsumers.size || roleConsumers.size) {
     try {
-      const iam = new IAMClient({ region: 'us-east-1', ...creds(auth) });   // IAM is global
+      const iam = retrying(new IAMClient({ region: 'us-east-1', ...creds(auth) }));   // IAM is global
       for (const [pname, consumers] of profileConsumers) {
         try {
           const r = await iam.send(new GetInstanceProfileCommand({ InstanceProfileName: pname }));
@@ -862,8 +1097,11 @@ async function enrichRegion(region, scan, auth) {
       for (const [roleName, consumers] of roleConsumers) {
         const docs = [];
         try {
-          const inline = await iam.send(new ListRolePoliciesCommand({ RoleName: roleName }));
-          for (const pn of inline.PolicyNames || []) {
+          const inlineNames = await drain(
+            Marker => iam.send(new ListRolePoliciesCommand({ RoleName: roleName, Marker })),
+            p => p.PolicyNames,
+          );
+          for (const pn of inlineNames) {
             try {
               const rp = await iam.send(new GetRolePolicyCommand({ RoleName: roleName, PolicyName: pn }));
               docs.push(JSON.parse(decodeURIComponent(rp.PolicyDocument)));
@@ -871,8 +1109,11 @@ async function enrichRegion(region, scan, auth) {
           }
         } catch { /* skip role */ }
         try {
-          const att = await iam.send(new ListAttachedRolePoliciesCommand({ RoleName: roleName }));
-          for (const ap of att.AttachedPolicies || []) {
+          const attached = await drain(
+            Marker => iam.send(new ListAttachedRolePoliciesCommand({ RoleName: roleName, Marker })),
+            p => p.AttachedPolicies,
+          );
+          for (const ap of attached) {
             if (/:aws:policy\//.test(ap.PolicyArn)) continue;    // AWS-managed
             if (!managedCache.has(ap.PolicyArn)) {
               try {
@@ -906,9 +1147,16 @@ async function enrichRegion(region, scan, auth) {
     r.region === region && r.service === 'ec2' && r.type === 'instance' && r.untagged && !r.vpcId);
   if (orphans.length) {
     try {
-      const r = await ec2.send(new DescribeInstancesCommand({ InstanceIds: orphans.map(o => o.id) }));
-      for (const res of r.Reservations || []) for (const inst of res.Instances || []) {
-        const node = byId.get(inst.InstanceId);
+      const reservations = [];
+      for (const batch of chunk(orphans.map(o => o.id), 100)) {
+        reservations.push(...await drain(
+          NextToken => ec2.send(new DescribeInstancesCommand({ InstanceIds: batch, NextToken })),
+          p => p.Reservations,
+          { nextKey: 'NextToken' },
+        ));
+      }
+      for (const res of reservations) for (const inst of res.Instances || []) {
+        const node = findById(inst.InstanceId);
         if (!node) continue;
         node.vpcId = inst.VpcId; node.subnetId = inst.SubnetId; node.az = inst.Placement?.AvailabilityZone;
         node.name = nameFromTags(inst.Tags) || node.name;
@@ -934,6 +1182,53 @@ async function enrichRegion(region, scan, auth) {
     } catch (e) { console.error(`    ! late subnet describe error: ${e.message}`); }
   }
 
+  // Public vs private is a route-table fact (0.0.0.0/0 → IGW vs NAT), not
+  // MapPublicIpOnLaunch. That is why a NAT was landing in a "private" box.
+  const vpcIdsForRoutes = [...new Set([
+    ...Object.keys(scan.vpcs || {}),
+    ...Object.values(scan.subnets || {}).map(s => s.vpcId).filter(Boolean),
+  ])];
+  if (vpcIdsForRoutes.length) {
+    try {
+      const tables = [];
+      for (const vpcId of vpcIdsForRoutes) {
+        tables.push(...await drain(
+          NextToken => ec2.send(new DescribeRouteTablesCommand({
+            Filters: [{ Name: 'vpc-id', Values: [vpcId] }],
+            NextToken,
+          })),
+          p => p.RouteTables,
+          { nextKey: 'NextToken' },
+        ));
+      }
+      applyRouteTables(scan, tables);
+    } catch (e) { console.error(`    ! Route table error: ${e.message}`); }
+  }
+  addOutboundEdges(scan);
+
+  const discovering = !scan.meta.tagKey;
+  const extra = {
+    region, scan, addEdge, attachSG, findById, upsert, byArn, byId,
+    ensureExternalInstance, discovering,
+    rds: retrying(new RDSClient(opts)),
+    classicElb: retrying(new ElasticLoadBalancingClient(opts)),
+    eb: retrying(new EventBridgeClient(opts)),
+    apigw: retrying(new ApiGatewayV2Client(opts)),
+    apigwRest: retrying(new APIGatewayClient(opts)),
+    sfn: retrying(new SFNClient(opts)),
+    ddb: retrying(new DynamoDBClient(opts)),
+    r53: retrying(new Route53Client({ region: 'us-east-1', ...creds(auth) })),
+  };
+  await enrichAurora(extra);
+  await enrichClassicElb(extra);
+  await enrichEventBridge(extra);
+  await enrichApiGateway(extra);
+  await enrichStepFunctions(extra);
+  await enrichDynamo(extra);
+  if (region === scan.meta.regions?.[0] || region === 'us-east-1') {
+    await enrichRoute53(extra);
+  }
+
   // ---- Security-group ingress rules -> resource-to-resource flow edges ----
   // A target resource's SG ingress rule can allow traffic either from another
   // security group (UserIdGroupPairs) OR from a CIDR range (IpRanges). We infer
@@ -946,9 +1241,12 @@ async function enrichRegion(region, scan, auth) {
     try {
       const sgIds = [...sgToResources.keys()];
       const groups = [];
-      for (let i = 0; i < sgIds.length; i += 200) {
-        const r = await ec2.send(new DescribeSecurityGroupsCommand({ GroupIds: sgIds.slice(i, i + 200) }));
-        groups.push(...(r.SecurityGroups || []));
+      for (const batch of chunk(sgIds, 200)) {
+        groups.push(...await drain(
+          NextToken => ec2.send(new DescribeSecurityGroupsCommand({ GroupIds: batch, NextToken })),
+          p => p.SecurityGroups,
+          { nextKey: 'NextToken' },
+        ));
       }
 
       // Index resources by IP (instances) and by subnet CIDR. CIDR-derived
@@ -985,11 +1283,17 @@ async function enrichRegion(region, scan, auth) {
             for (const from of sources) for (const to of targets) addEdge(from, to, label, 'sg-flow');
           }
 
+          for (const range of perm.Ipv6Ranges || []) {
+            if (isInternetCidr(range.CidrIpv6)) {
+              for (const to of targets) { addEdge('internet', to, label, 'internet'); internetUsed = true; }
+            }
+          }
+
           // (b) CIDR ranges
           for (const range of perm.IpRanges || []) {
             const cidr = range.CidrIp;
             if (!cidr) continue;
-            if (cidr === '0.0.0.0/0') {
+            if (isInternetCidr(cidr)) {
               for (const to of targets) { addEdge('internet', to, label, 'internet'); internetUsed = true; }
               continue;
             }
@@ -1187,14 +1491,17 @@ function markInternetUsed(scan, byArn, region) {
 }
 
 function ensureExternalInstance(scan, byId, instanceId, region) {
-  const arn = `arn:aws:ec2:${region}:${scan.meta.accountId || '000000000000'}:instance/${instanceId}`;
+  const part = scan.meta.partition || 'aws';
+  const arn = `arn:${part}:ec2:${region}:${scan.meta.accountId || '000000000000'}:instance/${instanceId}`;
   let node = byId.get(instanceId);
   if (node) return node;
   node = {
     arn, service: 'ec2', type: 'instance', id: instanceId, region,
-    account: scan.meta.accountId, name: instanceId, tags: {}, extra: {}, untagged: true,
+    account: scan.meta.accountId, partition: part,
+    name: instanceId, tags: {}, extra: {}, untagged: true,
   };
   scan.resources.push(node);
   byId.set(instanceId, node);
+  byId.set(idKey(region, instanceId), node);
   return node;
 }

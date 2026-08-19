@@ -1,11 +1,10 @@
-# blueprint\_ — your AWS architecture, drawn while you sleep
+# 3am\_blueprint — your AWS architecture, drawn while you sleep
 
 > Part of the [3am\_](https://3am.engineer/) open-source stack. MIT licensed.
->
-> Built over a long weekend, AI-assisted, at — when else — 3am. Reviewed,
-> tested, and used on real accounts by humans. PRs welcome.
+> Reviewed, tested, and used on real accounts. PRs welcome.
 
-Scan an AWS account — by tag, VPC, or the whole account — infer the
+Scan an AWS account — by tag, VPC, or the whole account (tagged plus untagged
+common services) — infer the
 relationships between resources, and generate a **self-contained HTML portal**
 that renders an architecture diagram using the official AWS icon set, with
 one-click **SVG** and **PNG** export.
@@ -54,16 +53,29 @@ one-click **SVG** and **PNG** export.
      permissive account doesn't turn into a wall of orange lines.
 3. **Groups** everything into nested containers: `AWS Account → Region → VPC →
    public/private Subnet` (green/blue, matching the official AWS reference
-   diagrams), plus a *Regional services* box for S3, DynamoDB, SQS, SNS,
-   CloudFront, etc. Low-signal resources (AMIs, snapshots, volumes, ENIs,
-   route tables, security groups, alarms — plus VPCs/subnets themselves, which
+   diagrams — public means a `0.0.0.0/0` route to an Internet Gateway, so a
+   NAT gateway lands in the public subnet it actually occupies), plus a *Regional services* box for S3, DynamoDB, SQS, SNS,
+   CloudFront, etc.    Low-signal resources (AMIs, snapshots, volumes, ENIs,
+   route tables, security groups, alarms, EKS pods, ELB listener rules,
+   CloudFormation stacks, ECS tasks — plus VPCs/subnets themselves, which
    are already drawn as containers) are **hidden by default** to keep the
    diagram readable — pass `--show-all` to include them.
-4. **Lays out** the graph with [elkjs] and **renders** an interactive portal
+4. **Diffs** a new scan against a previous `scan.json` (`blueprint diff` or
+   `--diff`): added, removed, and changed resources, plus new or gone
+   connectors. New public exposure (internet-facing scheme, public resource
+   policy, new Internet edge) is called out. The portal highlights additions
+   in green, removals as red ghosts, and changes in amber, and writes
+   `diff.json` next to the diagram.
+5. **Lays out** the graph with [elkjs] and **renders** an interactive portal
    (pan, zoom, search, legend, resource list) plus a standalone `diagram.svg`.
    Click any resource — in the diagram or the sidebar — to highlight its
    connections and open an **inspector panel** with its ARN, placement,
-   security groups, instance/engine details, and tags.
+   security groups, instance/engine details, and tags. Connectors animate
+   along their direction; selecting a resource paints **outbound** flow
+   green and **inbound** flow blue (toggle **Flow** in the toolbar, or it
+   stays still when the OS asks for reduced motion). **Outbound** (toolbar)
+   shows NAT → Internet and private compute → NAT egress; turn it off to
+   keep the inbound-only view.
 
 Icons are embedded as base64 data URIs, so the SVG/HTML and PNG export work
 completely offline with no external references.
@@ -78,6 +90,9 @@ blueprint fetch-icons           # downloads the official AWS icon set
 blueprint                       # interactive TUI
 ```
 
+The icon set is optional: without it, everything still works and resources
+render with a neutral generic tile instead of the official AWS icons.
+
 Or from a checkout:
 
 ```bash
@@ -90,8 +105,9 @@ node bin/blueprint.js
 
 Requires Node 18+. The icon set is looked up in `--icons-dir`,
 `$BLUEPRINT_ICONS_DIR`, `./icons`, `~/.blueprint/icons`, then the package
-directory. The icons themselves are © AWS and are downloaded from AWS
-directly — they are not bundled in this repo or the npm package.
+directory; if none exists, blueprint falls back to generic tiles. The icons
+themselves are © AWS and are downloaded from AWS directly — they are not
+bundled in this repo or the npm package.
 
 ## Usage
 
@@ -101,7 +117,8 @@ Run `blueprint` (or `node bin/blueprint.js`) with no arguments to get an
 interactive terminal wizard: pick a scope (tag / VPC / whole account), an AWS
 profile (auto-detected from `~/.aws`), regions, and grouping; watch scan
 progress live; then open the rendered portal straight from the menu. The TUI
-can also re-render saved scans, fetch provider icon sets, and start the web UI.
+can also re-render saved scans, compare two scans, fetch provider icon sets,
+and start the web UI.
 
 ### Flags (scriptable)
 
@@ -117,6 +134,12 @@ node bin/blueprint.js --tag Project --value acme --all-regions
 
 # Re-render from a saved scan, no AWS calls (great for tweaking / offline)
 node bin/blueprint.js --from-json out/acme/scan.json --out out/acme
+
+# Compare two scans — text report + highlighted portal (green / red / amber)
+node bin/blueprint.js diff out/acme/scan.prev.json out/acme/scan.json --out out/acme-diff
+
+# Re-scan and diff against the last scan.json in --out
+node bin/blueprint.js --tag Project --value acme --diff --out out/acme
 ```
 
 Then open `out/<...>/index.html` in a browser.
@@ -156,25 +179,33 @@ demo mode).
 ### Hosting it for others
 
 ```bash
-# gate scans behind a shared code, bind publicly (behind your TLS proxy!)
-ACCESS_CODE=my-invite-code node bin/blueprint.js serve --host 0.0.0.0 --port 8787
+# bind publicly (behind your TLS proxy!) — an access code is required
+export ACCESS_CODE="$(openssl rand -base64 24)"
+export VIEW_SECRET="$(openssl rand -hex 32)"
+TRUST_PROXY=1 node bin/blueprint.js serve --host 0.0.0.0 --port 8787
 
 # or with Docker
 docker build -t 3am-blueprint .
-docker run -p 8787:8787 -e ACCESS_CODE=my-invite-code 3am-blueprint
+docker run -p 8787:8787 -e ACCESS_CODE="$ACCESS_CODE" -e TRUST_PROXY=1 3am-blueprint
 ```
 
-Built-in protections for small-audience hosting: optional `ACCESS_CODE` gate
-on all credential-touching endpoints (the demo stays open), 12-scans-per-15-min
-per-IP rate limit, 2 h in-memory result TTL, localhost bind by default. Put
-HTTPS in front (Caddy/nginx/Cloudflare) before sharing a URL — credentials
-must never travel over plain HTTP. Works as-is on Fly.io, Railway, or any
-VM with Docker.
+Because a scan posts live AWS keys, the server refuses to make that easy to get
+wrong: binding anything other than loopback **will not start** without a
+16+ character `ACCESS_CODE`, and `/api/*` rejects credentials arriving over
+plain HTTP from a non-loopback client. Put HTTPS in front (Caddy/nginx/
+Cloudflare) and set `TRUST_PROXY` so rate limits see real client IPs. Works
+as-is on Fly.io, Railway, or any VM with Docker.
+
+Also built in: per-IP rate limits on every API route plus a stricter budget for
+scans, throttled access-code guessing, a per-scan deadline, a nonce CSP on the
+credential page, a sandboxed diagram iframe, HMAC-signed diagram links, a
+`/healthz` probe, and graceful shutdown. Full detail and every environment
+variable: [SECURITY.md](SECURITY.md).
 
 **Credential handling:** keys are sent to *your* server only, used for that
 one scan, held in memory, never persisted and never logged. Rendered diagrams
-are cached in memory for 2 h (no credentials in them). The server binds to
-`localhost` — to expose it publicly, put a TLS reverse proxy in front.
+are cached in memory for 2 h (no credentials in them) and are reachable only
+with their signed link, so a leaked id exposes nothing.
 
 **Before offering this as a real SaaS**, switch from pasted keys to the
 standard cross-account pattern: your service gets its own AWS identity, and
@@ -196,6 +227,7 @@ revocable in their IAM console, and CloudTrail attributes every call.
 | `--icons-dir <path>` | Path to the AWS icon set (default `./icons`) |
 | `--title <text>` | Portal header title |
 | `--from-json <file>` | Render from a saved `scan.json` instead of calling AWS |
+| `--diff [file]` | Compare against a previous `scan.json`. Omit the path to use `<out>/scan.json` from the last run. Writes `diff.json` and highlights added / removed / changed resources in the portal |
 | `-h, --help` | Help |
 
 ### Output files (in `--out`)
@@ -208,6 +240,8 @@ revocable in their IAM console, and CloudTrail attributes every call.
 - `diagram.mmd` — Mermaid flowchart (diagram-as-code; renders on GitHub)
 - `diagram.excalidraw` — editable Excalidraw scene with embedded icons
 - `scan.json` — the raw scan model (audit / re-render with `--from-json`)
+- `scan.prev.json` — the previous `scan.json`, copied aside before overwrite
+- `diff.json` — structured added / removed / changed report (when `--diff` ran)
 - `diagram.json` — the laid-out geometry (debugging)
 
 [draw.io / diagrams.net]: https://app.diagrams.net/
@@ -249,6 +283,18 @@ examples/         sample scans for offline demos
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and
 [SECURITY.md](SECURITY.md) for how credentials are handled.
+
+### Tests & CI
+
+```bash
+npm test                        # node:test — no AWS account or icons needed
+npm run demo                    # render examples/sample-scan.json into ./out
+```
+
+The suite covers the IAM/resource-policy edge inference plus an end-to-end
+render smoke test that runs *without* the icon set installed — the same way
+CI runs it (GitHub Actions renders the sample scan on Node 18/20/22 with no
+icons available, exercising the generic-tile fallback).
 
 ### Extending
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>blueprint_ by 3am_ — your AWS architecture, drawn while you sleep</title>
-<meta name="description" content="blueprint_ scans any AWS account and draws an interactive architecture diagram — VPCs, subnets, real traffic flows from security groups, official AWS icons. Read-only. Self-hosted. Part of the 3am_ open-source stack."/>
+<title>3am_blueprint — your AWS architecture, drawn while you sleep</title>
+<meta name="description" content="3am_blueprint scans any AWS account and draws an interactive architecture diagram — VPCs, subnets, real traffic flows from security groups, official AWS icons. Read-only. Self-hosted. Part of the 3am_ open-source stack."/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
@@ -24,11 +24,9 @@
   .lic { width:1em; height:1em; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; vertical-align:-0.12em; }
   .wrap { max-width:1100px; margin:0 auto; padding:0 24px; }
 
-  /* logo with blinking cursor */
+  /* logo with blinking cursor on the 3am_ underscore */
   .logo { display:flex; align-items:baseline; gap:8px; font-family:"JetBrains Mono",monospace; font-weight:700; font-size:17px; letter-spacing:-.02em; }
-  .logo .name::after { content:"_"; color:var(--green); animation:blink 1.1s steps(1) infinite; }
-  .logo .by { font-size:11px; font-weight:400; color:var(--dim); }
-  .logo .by b { color:var(--mut); font-weight:500; }
+  .logo .cur { color:var(--green); animation:blink 1.1s steps(1) infinite; }
   @keyframes blink { 50% { opacity:0; } }
 
   nav { position:sticky; top:0; z-index:10; backdrop-filter:blur(12px); background:#05080DD9; border-bottom:1px solid var(--line); }
@@ -78,9 +76,6 @@
   .term .c { color:var(--ink); }
   .term .ok { color:var(--green); }
   .term .warn { color:var(--amber); }
-  .shot { border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:0 24px 70px #00000080; }
-  .shot img { width:100%; display:block; background:#fff; }
-
   /* sections */
   section { padding:78px 0; }
   .kicker { color:var(--green); font-size:12px; font-family:"JetBrains Mono",monospace; }
@@ -124,12 +119,142 @@
   footer .right { margin-left:auto; display:flex; gap:18px; }
   footer a:hover { color:var(--green); }
   @media (max-width:720px){ nav .links { display:none; } }
+
+  /* ---------- motion ---------- */
+
+  /* hero entrance: staggered rise */
+  @keyframes rise { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:none; } }
+  .hero .pill, .hero h1, .hero .sub, .hero .actions, .hero .tiny, .hero .hviz, .hero .duo {
+    animation:rise .7s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .hero .pill { animation-delay:.05s; }
+  .hero h1 { animation-delay:.14s; }
+  .hero .sub { animation-delay:.24s; }
+  .hero .actions { animation-delay:.34s; }
+  .hero .tiny { animation-delay:.42s; }
+  .hero .hviz { animation-delay:.45s; }
+  .hero .duo { animation-delay:.55s; }
+
+  /* hero split: copy left, live diagram right */
+  .htop { display:grid; grid-template-columns:1.08fr .92fr; gap:44px; align-items:center; }
+  .hviz svg { width:100%; height:auto; display:block; }
+  @media (max-width:940px) { .htop { grid-template-columns:1fr; } .hviz { max-width:480px; } }
+
+  /* ---- the self-drawing diagram: builds once (~4.5s), then stays put
+         while the traffic pulses keep flowing ---- */
+  .vz .vz-cont { animation:vzCont 8s linear 1 both; }
+  @keyframes vzCont { 0%,2% { opacity:0; } 7%,100% { opacity:1; } }
+
+  .vz .vz-node { transform-box:fill-box; transform-origin:50% 50%; animation:8s cubic-bezier(.2,.7,.2,1) 1 both; }
+  .vz .vz-n1 { animation-name:vzN1; }
+  .vz .vz-n2 { animation-name:vzN2; }
+  .vz .vz-n3 { animation-name:vzN3; }
+  @keyframes vzN1 { 0%,9%  { opacity:0; transform:scale(.7); } 13%,100% { opacity:1; transform:scale(1); } }
+  @keyframes vzN2 { 0%,21% { opacity:0; transform:scale(.7); } 25%,100% { opacity:1; transform:scale(1); } }
+  @keyframes vzN3 { 0%,35% { opacity:0; transform:scale(.7); } 39%,100% { opacity:1; transform:scale(1); } }
+
+  /* edges use pathLength=1 so the dash trick is identical for every path */
+  .vz path.vz-edge { fill:none; stroke-dasharray:1; stroke-dashoffset:0; animation:8s ease-out 1 both; }
+  .vz .vz-e1 { animation-name:vzE1; }
+  .vz .vz-e2 { animation-name:vzE2; }
+  .vz .vz-e3 { animation-name:vzE3; }
+  @keyframes vzE1 { 0%,14% { stroke-dashoffset:1; } 21%,100% { stroke-dashoffset:0; } }
+  @keyframes vzE2 { 0%,26% { stroke-dashoffset:1; } 33%,100% { stroke-dashoffset:0; } }
+  @keyframes vzE3 { 0%,40% { stroke-dashoffset:1; } 47%,100% { stroke-dashoffset:0; } }
+
+  .vz .vz-lbl { animation:8s linear 1 both; }
+  .vz .vz-l1 { animation-name:vzL1; }
+  .vz .vz-l2 { animation-name:vzL2; }
+  .vz .vz-l3 { animation-name:vzL3; }
+  @keyframes vzL1 { 0%,18% { opacity:0; } 22%,100% { opacity:1; } }
+  @keyframes vzL2 { 0%,31% { opacity:0; } 35%,100% { opacity:1; } }
+  @keyframes vzL3 { 0%,45% { opacity:0; } 49%,100% { opacity:1; } }
+
+  /* extras appear last: exposure badge + traffic pulses (these keep looping) */
+  .vz .vz-x { animation:vzX 8s linear 1 both; }
+  @keyframes vzX { 0%,50% { opacity:0; } 54%,100% { opacity:1; } }
+  .vz .vz-ping { transform-box:fill-box; transform-origin:50% 50%; animation:vzPing 2.2s ease-out infinite; }
+  @keyframes vzPing { 0% { transform:scale(.4); opacity:.9; } 70%,100% { transform:scale(2.1); opacity:0; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vz, .vz * { animation:none !important; opacity:1 !important; }
+  }
+
+  /* hero glow: slow aurora drift + grid pan */
+  @keyframes aurora {
+    0%,100% { transform:translate3d(0,0,0) scale(1); opacity:1; }
+    50% { transform:translate3d(-28px,18px,0) scale(1.06); opacity:.85; }
+  }
+  .hero::before { animation:aurora 14s ease-in-out infinite; }
+  @keyframes gridpan { from { background-position:0 0, 0 0; } to { background-position:0 44px, 44px 0; } }
+  .hero::after { animation:gridpan 24s linear infinite; }
+
+  /* shimmering green headline */
+  .hero h1 .g {
+    background:linear-gradient(100deg, var(--green) 20%, #B8FFE9 42%, var(--green) 60%, var(--green2) 85%);
+    background-size:220% 100%;
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; color:transparent;
+    animation:sheen-text 5.5s ease-in-out infinite;
+  }
+  @keyframes sheen-text { 0%,100% { background-position:110% 0; } 50% { background-position:-15% 0; } }
+
+  /* primary button: light sweep + breathing glow */
+  .btn.primary { position:relative; overflow:hidden; animation:breathe 3.6s ease-in-out infinite; }
+  .btn.primary::after { content:""; position:absolute; top:0; bottom:0; left:-70%; width:45%;
+    background:linear-gradient(105deg, transparent, #FFFFFF66, transparent);
+    transform:skewX(-18deg); animation:sweep 4.2s ease-in-out infinite; }
+  @keyframes sweep { 0%,58% { left:-70%; } 78%,100% { left:140%; } }
+  @keyframes breathe { 0%,100% { box-shadow:0 0 24px #00E5A033; } 50% { box-shadow:0 0 38px #00E5A05C; } }
+
+  /* nav links: growing underline */
+  nav .links a { position:relative; padding-bottom:3px; }
+  nav .links a::after { content:""; position:absolute; left:0; bottom:0; height:1px; width:0;
+    background:var(--green); transition:width .22s ease; }
+  nav .links a:hover::after { width:100%; }
+
+  /* scroll reveal (elements get .reveal via JS; visible by default without JS) */
+  .reveal { opacity:0; transform:translateY(22px); transition:opacity .65s ease, transform .65s cubic-bezier(.2,.7,.2,1); transition-delay:var(--d,0s); }
+  .reveal.in { opacity:1; transform:none; }
+
+  /* feature cards: cursor spotlight + glow lift */
+  .feat { position:relative; overflow:hidden; }
+  .feat::before { content:""; position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .25s;
+    background:radial-gradient(220px 180px at var(--mx,50%) var(--my,50%), #00E5A014, transparent 70%); }
+  .feat:hover::before { opacity:1; }
+  .feat:hover { box-shadow:0 14px 40px #00000066, 0 0 0 1px #00E5A022; }
+  .feat .ic { transition:.18s; }
+  .feat:hover .ic { text-shadow:0 0 14px #00E5A088; }
+
+  .step, .sec, .hostcard { transition:border-color .2s, transform .2s; }
+  .step:hover { border-color:var(--green); transform:translateY(-2px); }
+  .sec:hover { transform:translateX(3px); }
+
+  /* terminal playback */
+  .term .tline { display:block; opacity:0; transform:translateY(4px); transition:opacity .3s ease, transform .3s ease; }
+  .term .tline.on { opacity:1; transform:none; }
+  .term .tcursor { display:inline-block; width:.62em; height:1.05em; vertical-align:-0.18em;
+    background:var(--green); animation:blink 1s steps(1) infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+    .reveal { opacity:1; transform:none; }
+    .term .tline { opacity:1; transform:none; }
+  }
+
+  /* Utility classes rather than style="" attributes: this page is served with a
+     nonce CSP, under which a nonce in style-src makes the browser ignore
+     'unsafe-inline', so inline style attributes would be blocked. */
+  .u-alt { background:var(--bg2); }
+  .u-logo-sm { font-size:13px; }
+  .termbar i.r { background:#FF5F57; }
+  .termbar i.y { background:#FEBC2E; }
+  .termbar i.g { background:#28C840; }
 </style>
 </head>
 <body>
 
 <nav><div class="wrap">
-  <a class="logo" href="#"><span class="name">blueprint</span><span class="by">by <b>3am_</b></span></a>
+  <a class="logo" href="#"><span class="name">3am<span class="cur">_</span>blueprint</span></a>
   <div class="links">
     <a href="#features">features</a>
     <a href="#how">how-it-works</a>
@@ -140,9 +265,11 @@
 </div></nav>
 
 <header class="hero"><div class="wrap">
+  <div class="htop">
+  <div class="hcopy">
   <span class="pill">$ part of the <b>3am_</b> open-source stack · MIT · read-only · nothing stored</span>
   <h1>Your AWS architecture,<br/><span class="g">drawn while you sleep.</span></h1>
-  <p class="sub">blueprint_ scans any AWS account and draws the diagram you'd sketch by hand —
+  <p class="sub">3am_blueprint scans any AWS account and draws the diagram you'd sketch by hand —
     VPCs, subnets, and real traffic flows inferred from security groups
     (<span class="mono">HTTPS :443</span>, <span class="mono">PostgreSQL :5432</span>),
     with the official AWS icon set. Search it, inspect it, export it.</p>
@@ -151,10 +278,96 @@
     <a class="btn ghost" href="/app?demo=1">$ run demo</a>
   </div>
   <div class="tiny">no agent · no CloudFormation · works with temporary credentials</div>
+  </div>
+
+  <div class="hviz" aria-hidden="true">
+    <svg class="vz" viewBox="0 0 440 360" fill="none" xmlns="http://www.w3.org/2000/svg"
+         font-family="'JetBrains Mono',ui-monospace,monospace">
+      <!-- internet -->
+      <g class="vz-node vz-n1">
+        <rect x="168" y="6" width="104" height="26" rx="13" fill="#0B121C" stroke="#2A3B52"/>
+        <circle cx="186" cy="19" r="5.5" stroke="#93A3B8"/>
+        <path d="M180.5 19h11M186 13.5c-4 3.6-4 7.4 0 11M186 13.5c4 3.6 4 7.4 0 11" stroke="#93A3B8" stroke-width=".9"/>
+        <text x="198" y="22.5" font-size="10" fill="#93A3B8">internet</text>
+      </g>
+
+      <!-- vpc + subnets -->
+      <g class="vz-cont">
+        <rect x="24" y="58" width="392" height="288" rx="10" stroke="#2A3B52" stroke-dasharray="5 5"/>
+        <text x="38" y="76" font-size="9" fill="#5B6B80">vpc-01 · 10.0.0.0/16</text>
+        <rect x="40" y="86" width="360" height="84" rx="8" fill="#00E5A008" stroke="#00E5A030"/>
+        <text x="52" y="102" font-size="8.5" fill="#0AC98F">public subnet</text>
+        <rect x="40" y="186" width="360" height="146" rx="8" fill="#4CC2FF08" stroke="#4CC2FF2C"/>
+        <text x="52" y="202" font-size="8.5" fill="#4CC2FF">private subnet</text>
+      </g>
+
+      <!-- edges: orthogonal elbow routing, like the real renderer -->
+      <path class="vz-edge vz-e1" pathLength="1" d="M220 32 V118" stroke="#00E5A0" stroke-width="1.4"/>
+      <path class="vz-edge vz-e2" pathLength="1" d="M198 160 V187 H118 V214" stroke="#4CC2FF" stroke-width="1.2"/>
+      <path class="vz-edge vz-e2" pathLength="1" d="M242 160 V187 H322 V214" stroke="#4CC2FF" stroke-width="1.2"/>
+      <path class="vz-edge vz-e3" pathLength="1" d="M118 256 V299 H164" stroke="#FFB454" stroke-width="1.2"/>
+      <path class="vz-edge vz-e3" pathLength="1" d="M322 256 V299 H276" stroke="#FFB454" stroke-width="1.2"/>
+
+      <text class="vz-lbl vz-l1" x="228" y="80" font-size="8.5" fill="#FFB454">HTTPS :443</text>
+      <text class="vz-lbl vz-l2" x="120" y="184" font-size="8.5" fill="#4CC2FF">HTTP :80</text>
+      <text class="vz-lbl vz-l2" x="268" y="184" font-size="8.5" fill="#4CC2FF">HTTP :80</text>
+      <text class="vz-lbl vz-l3" x="60" y="284" font-size="8.5" fill="#FFB454">MySQL :3306</text>
+
+      <!-- alb -->
+      <g class="vz-node vz-n1">
+        <rect x="160" y="118" width="120" height="42" rx="8" fill="#0E1622" stroke="#1B2735"/>
+        <image x="169" y="128" width="21" height="21" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iNDBweCIgaGVpZ2h0PSI0MHB4IiB2aWV3Qm94PSIwIDAgNDAgNDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayI+CiAgICA8dGl0bGU+SWNvbi1BcmNoaXRlY3R1cmUvMzIvQXJjaF9FbGFzdGljLUxvYWQtQmFsYW5jaW5nXzMyPC90aXRsZT4KICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS8zMi9BcmNoX0VsYXN0aWMtTG9hZC1CYWxhbmNpbmdfMzIiIHN0cm9rZT0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxIiBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPgogICAgICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS1CRy8zMi9OZXR3b3JraW5nLUNvbnRlbnQtRGVsaXZlcnkiIGZpbGw9IiM4QzRGRkYiPgogICAgICAgICAgICA8cmVjdCBpZD0iUmVjdGFuZ2xlIiB4PSIwIiB5PSIwIiB3aWR0aD0iNDAiIGhlaWdodD0iNDAiPjwvcmVjdD4KICAgICAgICA8L2c+CiAgICAgICAgPHBhdGggZD0iTTE1LDI3IEMxMS4xNDEsMjcgOCwyMy44NiA4LDIwIEM4LDE2LjE0IDExLjE0MSwxMyAxNSwxMyBDMTguODU5LDEzIDIyLDE2LjE0IDIyLDIwIEMyMiwyMy44NiAxOC44NTksMjcgMTUsMjcgTTI5LDI4IEMzMC4xMDMsMjggMzEsMjguODk3IDMxLDMwIEMzMSwzMS4xMDMgMzAuMTAzLDMyIDI5LDMyIEMyNy44OTcsMzIgMjcsMzEuMTAzIDI3LDMwIEMyNywyOC44OTcgMjcuODk3LDI4IDI5LDI4IE0yOSw4IEMzMC4xMDMsOCAzMSw4Ljg5NyAzMSwxMCBDMzEsMTEuMTAzIDMwLjEwMywxMiAyOSwxMiBDMjcuODk3LDEyIDI3LDExLjEwMyAyNywxMCBDMjcsOC44OTcgMjcuODk3LDggMjksOCBNMzAsMTguNSBDMzEuMTAzLDE4LjUgMzIsMTkuMzk3IDMyLDIwLjUgQzMyLDIxLjYwMyAzMS4xMDMsMjIuNSAzMCwyMi41IEMyOC44OTcsMjIuNSAyOCwyMS42MDMgMjgsMjAuNSBDMjgsMTkuMzk3IDI4Ljg5NywxOC41IDMwLDE4LjUgTTIyLjkzMSwyMSBMMjcuMDUxLDIxIEMyNy4yOSwyMi40MTYgMjguNTE3LDIzLjUgMzAsMjMuNSBDMzEuNjU0LDIzLjUgMzMsMjIuMTU0IDMzLDIwLjUgQzMzLDE4Ljg0NiAzMS42NTQsMTcuNSAzMCwxNy41IEMyOC41MTcsMTcuNSAyNy4yOSwxOC41ODQgMjcuMDUxLDIwIEwyMywyMCBDMjMsMTguNTExIDIyLjU4NCwxNy4xMiAyMS44NzIsMTUuOTI1IEwyNi42OTksMTEuOTAyIEMyNy4yNSwxMi41NjcgMjguMDcxLDEzIDI5LDEzIEMzMC42NTQsMTMgMzIsMTEuNjU0IDMyLDEwIEMzMiw4LjM0NiAzMC42NTQsNyAyOSw3IEMyNy4zNDYsNyAyNiw4LjM0NiAyNiwxMCBDMjYsMTAuMzYxIDI2LjA3NCwxMC43MDIgMjYuMTkxLDExLjAyMiBMMjEuMzA2LDE1LjA5NCBDMTkuODQsMTMuMjE1IDE3LjU2MiwxMiAxNSwxMiBDMTAuNTg5LDEyIDcsMTUuNTg5IDcsMjAgQzcsMjQuNDExIDEwLjU4OSwyOCAxNSwyOCBDMTcuNTYyLDI4IDE5Ljg0LDI2Ljc4NSAyMS4zMDYsMjQuOTA2IEwyNi4xOTEsMjguOTc4IEMyNi4wNzQsMjkuMjk4IDI2LDI5LjYzOSAyNiwzMCBDMjYsMzEuNjU0IDI3LjM0NiwzMyAyOSwzMyBDMzAuNjU0LDMzIDMyLDMxLjY1NCAzMiwzMCBDMzIsMjguMzQ2IDMwLjY1NCwyNyAyOSwyNyBDMjguMDcxLDI3IDI3LjI1LDI3LjQzMyAyNi42OTksMjguMDk4IEwyMS44NzIsMjQuMDc1IEMyMi40MjIsMjMuMTUyIDIyLjc5MSwyMi4xMTMgMjIuOTMxLDIxIiBpZD0iRWxhc3RpYy1Mb2FkLUJhbGFuY2luZ19JY29uXzMyX1NxdWlkIiBmaWxsPSIjRkZGRkZGIj48L3BhdGg+CiAgICA8L2c+Cjwvc3ZnPg=="/>
+        <text x="197" y="139" font-size="10" fill="#E6EDF3">acme-alb</text>
+        <text x="197" y="151" font-size="8" fill="#5B6B80">app load balancer</text>
+      </g>
+
+      <!-- ec2 pair -->
+      <g class="vz-node vz-n2">
+        <rect x="62" y="214" width="112" height="42" rx="8" fill="#0E1622" stroke="#1B2735"/>
+        <image x="71" y="224" width="21" height="21" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iNDBweCIgaGVpZ2h0PSI0MHB4IiB2aWV3Qm94PSIwIDAgNDAgNDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayI+CiAgICA8dGl0bGU+SWNvbi1BcmNoaXRlY3R1cmUvMzIvQXJjaF9BbWF6b24tRUMyXzMyPC90aXRsZT4KICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS8zMi9BcmNoX0FtYXpvbi1FQzJfMzIiIHN0cm9rZT0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxIiBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPgogICAgICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS1CRy8zMi9Db21wdXRlIiBmaWxsPSIjRUQ3MTAwIj4KICAgICAgICAgICAgPHJlY3QgaWQ9IlJlY3RhbmdsZSIgeD0iMCIgeT0iMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIj48L3JlY3Q+CiAgICAgICAgPC9nPgogICAgICAgIDxwYXRoIGQ9Ik0yNi4wNTIsMjcgTDI2LDEzLjk0OCBMMTMsMTQgTDEzLDI3LjA1MiBMMjYuMDUyLDI3IFogTTI3LDE0IEwyOSwxNCBMMjksMTUgTDI3LDE1IEwyNywxNyBMMjksMTcgTDI5LDE4IEwyNywxOCBMMjcsMjAgTDI5LDIwIEwyOSwyMSBMMjcsMjEgTDI3LDIzIEwyOSwyMyBMMjksMjQgTDI3LDI0IEwyNywyNiBMMjksMjYgTDI5LDI3IEwyNywyNyBMMjcsMjcuMDUyIEMyNywyNy41NzUgMjYuNTc0LDI4IDI2LjA1MiwyOCBMMjYsMjggTDI2LDMwIEwyNSwzMCBMMjUsMjggTDIzLDI4IEwyMywzMCBMMjIsMzAgTDIyLDI4IEwyMCwyOCBMMjAsMzAgTDE5LDMwIEwxOSwyOCBMMTcsMjggTDE3LDMwIEwxNiwzMCBMMTYsMjggTDE0LDI4IEwxNCwzMCBMMTMsMzAgTDEzLDI4IEwxMi45NDgsMjggQzEyLjQyNiwyOCAxMiwyNy41NzUgMTIsMjcuMDUyIEwxMiwyNyBMMTAsMjcgTDEwLDI2IEwxMiwyNiBMMTIsMjQgTDEwLDI0IEwxMCwyMyBMMTIsMjMgTDEyLDIxIEwxMCwyMSBMMTAsMjAgTDEyLDIwIEwxMiwxOCBMMTAsMTggTDEwLDE3IEwxMiwxNyBMMTIsMTUgTDEwLDE1IEwxMCwxNCBMMTIsMTQgTDEyLDEzLjk0OCBDMTIsMTMuNDI1IDEyLjQyNiwxMyAxMi45NDgsMTMgTDEzLDEzIEwxMywxMSBMMTQsMTEgTDE0LDEzIEwxNiwxMyBMMTYsMTEgTDE3LDExIEwxNywxMyBMMTksMTMgTDE5LDExIEwyMCwxMSBMMjAsMTMgTDIyLDEzIEwyMiwxMSBMMjMsMTEgTDIzLDEzIEwyNSwxMyBMMjUsMTEgTDI2LDExIEwyNiwxMyBMMjYuMDUyLDEzIEMyNi41NzQsMTMgMjcsMTMuNDI1IDI3LDEzLjk0OCBMMjcsMTQgWiBNMjEsMzMgTDcsMzMgTDcsMTkgTDksMTkgTDksMTggTDcuMDYyLDE4IEM2LjQ3NywxOCA2LDE4LjQ3NyA2LDE5LjA2MiBMNiwzMi45MzggQzYsMzMuNTIzIDYuNDc3LDM0IDcuMDYyLDM0IEwyMC45MzksMzQgQzIxLjUyNCwzNCAyMiwzMy41MjMgMjIsMzIuOTM4IEwyMiwzMSBMMjEsMzEgTDIxLDMzIFogTTM0LDcuMDYyIEwzNCwyMC45MzggQzM0LDIxLjUyMyAzMy41MjQsMjIgMzIuOTM5LDIyIEwzMCwyMiBMMzAsMjEgTDMzLDIxIEwzMyw3IEwxOSw3IEwxOSwxMCBMMTgsMTAgTDE4LDcuMDYyIEMxOCw2LjQ3NyAxOC40NzcsNiAxOS4wNjIsNiBMMzIuOTM5LDYgQzMzLjUyNCw2IDM0LDYuNDc3IDM0LDcuMDYyIEwzNCw3LjA2MiBaIiBpZD0iQW1hem9uLUVDMl9JY29uXzMyX1NxdWlkIiBmaWxsPSIjRkZGRkZGIj48L3BhdGg+CiAgICA8L2c+Cjwvc3ZnPg=="/>
+        <text x="99" y="235" font-size="10" fill="#E6EDF3">web-1</text>
+        <text x="99" y="247" font-size="8" fill="#5B6B80">ec2 · t3.medium</text>
+      </g>
+      <g class="vz-node vz-n2">
+        <rect x="266" y="214" width="112" height="42" rx="8" fill="#0E1622" stroke="#1B2735"/>
+        <image x="275" y="224" width="21" height="21" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iNDBweCIgaGVpZ2h0PSI0MHB4IiB2aWV3Qm94PSIwIDAgNDAgNDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayI+CiAgICA8dGl0bGU+SWNvbi1BcmNoaXRlY3R1cmUvMzIvQXJjaF9BbWF6b24tRUMyXzMyPC90aXRsZT4KICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS8zMi9BcmNoX0FtYXpvbi1FQzJfMzIiIHN0cm9rZT0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxIiBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPgogICAgICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS1CRy8zMi9Db21wdXRlIiBmaWxsPSIjRUQ3MTAwIj4KICAgICAgICAgICAgPHJlY3QgaWQ9IlJlY3RhbmdsZSIgeD0iMCIgeT0iMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIj48L3JlY3Q+CiAgICAgICAgPC9nPgogICAgICAgIDxwYXRoIGQ9Ik0yNi4wNTIsMjcgTDI2LDEzLjk0OCBMMTMsMTQgTDEzLDI3LjA1MiBMMjYuMDUyLDI3IFogTTI3LDE0IEwyOSwxNCBMMjksMTUgTDI3LDE1IEwyNywxNyBMMjksMTcgTDI5LDE4IEwyNywxOCBMMjcsMjAgTDI5LDIwIEwyOSwyMSBMMjcsMjEgTDI3LDIzIEwyOSwyMyBMMjksMjQgTDI3LDI0IEwyNywyNiBMMjksMjYgTDI5LDI3IEwyNywyNyBMMjcsMjcuMDUyIEMyNywyNy41NzUgMjYuNTc0LDI4IDI2LjA1MiwyOCBMMjYsMjggTDI2LDMwIEwyNSwzMCBMMjUsMjggTDIzLDI4IEwyMywzMCBMMjIsMzAgTDIyLDI4IEwyMCwyOCBMMjAsMzAgTDE5LDMwIEwxOSwyOCBMMTcsMjggTDE3LDMwIEwxNiwzMCBMMTYsMjggTDE0LDI4IEwxNCwzMCBMMTMsMzAgTDEzLDI4IEwxMi45NDgsMjggQzEyLjQyNiwyOCAxMiwyNy41NzUgMTIsMjcuMDUyIEwxMiwyNyBMMTAsMjcgTDEwLDI2IEwxMiwyNiBMMTIsMjQgTDEwLDI0IEwxMCwyMyBMMTIsMjMgTDEyLDIxIEwxMCwyMSBMMTAsMjAgTDEyLDIwIEwxMiwxOCBMMTAsMTggTDEwLDE3IEwxMiwxNyBMMTIsMTUgTDEwLDE1IEwxMCwxNCBMMTIsMTQgTDEyLDEzLjk0OCBDMTIsMTMuNDI1IDEyLjQyNiwxMyAxMi45NDgsMTMgTDEzLDEzIEwxMywxMSBMMTQsMTEgTDE0LDEzIEwxNiwxMyBMMTYsMTEgTDE3LDExIEwxNywxMyBMMTksMTMgTDE5LDExIEwyMCwxMSBMMjAsMTMgTDIyLDEzIEwyMiwxMSBMMjMsMTEgTDIzLDEzIEwyNSwxMyBMMjUsMTEgTDI2LDExIEwyNiwxMyBMMjYuMDUyLDEzIEMyNi41NzQsMTMgMjcsMTMuNDI1IDI3LDEzLjk0OCBMMjcsMTQgWiBNMjEsMzMgTDcsMzMgTDcsMTkgTDksMTkgTDksMTggTDcuMDYyLDE4IEM2LjQ3NywxOCA2LDE4LjQ3NyA2LDE5LjA2MiBMNiwzMi45MzggQzYsMzMuNTIzIDYuNDc3LDM0IDcuMDYyLDM0IEwyMC45MzksMzQgQzIxLjUyNCwzNCAyMiwzMy41MjMgMjIsMzIuOTM4IEwyMiwzMSBMMjEsMzEgTDIxLDMzIFogTTM0LDcuMDYyIEwzNCwyMC45MzggQzM0LDIxLjUyMyAzMy41MjQsMjIgMzIuOTM5LDIyIEwzMCwyMiBMMzAsMjEgTDMzLDIxIEwzMyw3IEwxOSw3IEwxOSwxMCBMMTgsMTAgTDE4LDcuMDYyIEMxOCw2LjQ3NyAxOC40NzcsNiAxOS4wNjIsNiBMMzIuOTM5LDYgQzMzLjUyNCw2IDM0LDYuNDc3IDM0LDcuMDYyIEwzNCw3LjA2MiBaIiBpZD0iQW1hem9uLUVDMl9JY29uXzMyX1NxdWlkIiBmaWxsPSIjRkZGRkZGIj48L3BhdGg+CiAgICA8L2c+Cjwvc3ZnPg=="/>
+        <text x="303" y="235" font-size="10" fill="#E6EDF3">web-2</text>
+        <text x="303" y="247" font-size="8" fill="#5B6B80">ec2 · t3.medium</text>
+      </g>
+
+      <!-- rds -->
+      <g class="vz-node vz-n3">
+        <rect x="164" y="278" width="112" height="42" rx="8" fill="#0E1622" stroke="#1B2735"/>
+        <image x="173" y="288" width="21" height="21" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iNDBweCIgaGVpZ2h0PSI0MHB4IiB2aWV3Qm94PSIwIDAgNDAgNDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayI+CiAgICA8dGl0bGU+SWNvbi1BcmNoaXRlY3R1cmUvMzIvQXJjaF9BbWF6b24tUkRTXzMyPC90aXRsZT4KICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS8zMi9BcmNoX0FtYXpvbi1SRFNfMzIiIHN0cm9rZT0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxIiBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPgogICAgICAgIDxnIGlkPSJJY29uLUFyY2hpdGVjdHVyZS1CRy8zMi9EYXRhYmFzZSIgZmlsbD0iI0M5MjVEMSI+CiAgICAgICAgICAgIDxyZWN0IGlkPSJSZWN0YW5nbGUiIHg9IjAiIHk9IjAiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PC9yZWN0PgogICAgICAgIDwvZz4KICAgICAgICA8cGF0aCBkPSJNMTEuODU0LDI4Ljg1NCBMNy43MDgsMzMgTDEwLjUsMzMgTDEwLjUsMzQgTDYuNSwzNCBDNi4yMjQsMzQgNiwzMy43NzcgNiwzMy41IEw2LDI5LjUgTDcsMjkuNSBMNywzMi4yOTMgTDExLjE0NywyOC4xNDcgTDExLjg1NCwyOC44NTQgWiBNMzMsMjkuNSBMMzQsMjkuNSBMMzQsMzMuNSBDMzQsMzMuNzc3IDMzLjc3NywzNCAzMy41LDM0IEwyOS41LDM0IEwyOS41LDMzIEwzMi4yOTMsMzMgTDI4LjE0NywyOC44NTQgTDI4Ljg1NCwyOC4xNDcgTDMzLDMyLjI5MyBMMzMsMjkuNSBaIE0zNCw2LjUgTDM0LDEwLjUgTDMzLDEwLjUgTDMzLDcuNzA4IEwyOC44NTQsMTEuODU0IEwyOC4xNDcsMTEuMTQ3IEwzMi4yOTMsNyBMMjkuNSw3IEwyOS41LDYgTDMzLjUsNiBDMzMuNzc3LDYgMzQsNi4yMjQgMzQsNi41IEwzNCw2LjUgWiBNNywxMC41IEw2LDEwLjUgTDYsNi41IEM2LDYuMjI0IDYuMjI0LDYgNi41LDYgTDEwLjUsNiBMMTAuNSw3IEw3LjUyNyw3IEwxMS44NDYsMTEuMTQgTDExLjE1NSwxMS44NjEgTDcsNy44OCBMNywxMC41IFogTTMyLjcyNiwxOS40IEMzMi43MjYsMTcuODQyIDMwLjkyLDE2LjMgMjcuODk2LDE1LjI3NyBMMjguMjE2LDE0LjMzIEMzMS43MTgsMTUuNTE1IDMzLjcyNiwxNy4zNjMgMzMuNzI2LDE5LjQgQzMzLjcyNiwyMS40MzcgMzEuNzE4LDIzLjI4NiAyOC4yMTYsMjQuNDcxIEwyNy44OTYsMjMuNTIzIEMzMC45MiwyMi41IDMyLjcyNiwyMC45NTggMzIuNzI2LDE5LjQgTDMyLjcyNiwxOS40IFogTTcuNzM3LDE5LjQgQzcuNzM3LDIwLjg5MiA5LjQyNywyMi4zOTMgMTIuMjU4LDIzLjQxNCBMMTEuOTE4LDI0LjM1NCBDOC42MjUsMjMuMTY3IDYuNzM3LDIxLjM2MSA2LjczNywxOS40IEM2LjczNywxNy40MzkgOC42MjUsMTUuNjMzIDExLjkxOCwxNC40NDUgTDEyLjI1OCwxNS4zODYgQzkuNDI3LDE2LjQwNyA3LjczNywxNy45MDggNy43MzcsMTkuNCBMNy43MzcsMTkuNCBaIE0yMC4wMjMsMTUuNzE5IEMxNi44ODcsMTUuNzE5IDE1LjEzMiwxNC45MiAxNS4xMDYsMTQuNTk0IEMxNS4xMzIsMTQuMjY4IDE2Ljg4NywxMy40NjkgMjAuMDIzLDEzLjQ2OSBDMjMuMTU2LDEzLjQ2OSAyNC45MTMsMTQuMjY3IDI0Ljk0LDE0LjU5NCBDMjQuOTEzLDE0LjkyIDIzLjE1NiwxNS43MTkgMjAuMDIzLDE1LjcxOSBMMjAuMDIzLDE1LjcxOSBaIE0yMC4wMjMsMTkuMjc0IEMxNi44NDEsMTkuMjc0IDE1LjEwNiwxOC4zNDggMTUuMTA2LDE3Ljg3MiBMMTUuMTA2LDE1Ljg0MiBDMTYuMjQxLDE2LjQzNyAxOC4xNzUsMTYuNzE5IDIwLjAyMywxNi43MTkgQzIxLjg3MSwxNi43MTkgMjMuODA1LDE2LjQzNyAyNC45NCwxNS44NDIgTDI0Ljk0LDE3Ljg3MiBDMjQuOTQsMTguMzQ4IDIzLjIwNSwxOS4yNzQgMjAuMDIzLDE5LjI3NCBMMjAuMDIzLDE5LjI3NCBaIE0yMC4wMjMsMjMuMDExIEMxNi44NDEsMjMuMDExIDE1LjEwNiwyMi4wODQgMTUuMTA2LDIxLjYwOCBMMTUuMTA2LDE5LjI2NSBDMTYuMjI1LDE5LjkzIDE4LjEyOSwyMC4yNzQgMjAuMDIzLDIwLjI3NCBDMjEuOTE3LDIwLjI3NCAyMy44MjEsMTkuOTMgMjQuOTQsMTkuMjY1IEwyNC45NCwyMS42MDggQzI0Ljk0LDIyLjA4NCAyMy4yMDUsMjMuMDExIDIwLjAyMywyMy4wMTEgTDIwLjAyMywyMy4wMTEgWiBNMjAuMDIzLDI2LjI5IEMxNi44NDEsMjYuMjkgMTUuMTA2LDI1LjM3NSAxNS4xMDYsMjQuOTA1IEwxNS4xMDYsMjMuMDAxIEMxNi4yMjUsMjMuNjY3IDE4LjEyOSwyNC4wMTEgMjAuMDIzLDI0LjAxMSBDMjEuOTE3LDI0LjAxMSAyMy44MjEsMjMuNjY3IDI0Ljk0LDIzLjAwMSBMMjQuOTQsMjQuOTA1IEMyNC45NCwyNS4zNzUgMjMuMjA1LDI2LjI5IDIwLjAyMywyNi4yOSBMMjAuMDIzLDI2LjI5IFogTTIwLjAyMywxMi40NjkgQzE3LjE3MywxMi40NjkgMTQuMTA2LDEzLjEzNCAxNC4xMDYsMTQuNTk0IEwxNC4xMDYsMjQuOTA1IEMxNC4xMDYsMjYuNDcxIDE3LjA4MywyNy4yOSAyMC4wMjMsMjcuMjkgQzIyLjk2MywyNy4yOSAyNS45NCwyNi40NzEgMjUuOTQsMjQuOTA1IEwyNS45NCwxNC41OTQgQzI1Ljk0LDEzLjEzNCAyMi44NzMsMTIuNDY5IDIwLjAyMywxMi40NjkgTDIwLjAyMywxMi40NjkgWiIgaWQ9IkFtYXpvbi1SRFNfSWNvbl8zMl9TcXVpZCIgZmlsbD0iI0ZGRkZGRiI+PC9wYXRoPgogICAgPC9nPgo8L3N2Zz4="/>
+        <text x="201" y="299" font-size="10" fill="#E6EDF3">acme-db</text>
+        <text x="201" y="311" font-size="8" fill="#5B6B80">rds · mysql</text>
+      </g>
+
+      <!-- extras: exposure badge + traffic pulses -->
+      <g class="vz-x">
+        <circle class="vz-ping" cx="280" cy="118" r="5" stroke="#FFB454"/>
+        <circle cx="280" cy="118" r="4" fill="#FFB454"/>
+        <text x="290" y="113" font-size="8" fill="#FFB454">0.0.0.0/0</text>
+        <circle r="2.6" fill="#00E5A0">
+          <animateMotion dur="2.4s" repeatCount="indefinite" path="M220 32 V118"/>
+        </circle>
+        <circle r="2.2" fill="#4CC2FF">
+          <animateMotion dur="2.8s" begin=".5s" repeatCount="indefinite" path="M198 160 V187 H118 V214"/>
+        </circle>
+        <circle r="2.2" fill="#4CC2FF">
+          <animateMotion dur="2.8s" begin="1.4s" repeatCount="indefinite" path="M242 160 V187 H322 V214"/>
+        </circle>
+        <circle r="2.2" fill="#FFB454">
+          <animateMotion dur="3.2s" begin=".9s" repeatCount="indefinite" path="M118 256 V299 H164"/>
+        </circle>
+      </g>
+    </svg>
+  </div>
+  </div>
 
   <div class="duo">
     <div class="term">
-      <div class="termbar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i><span>blueprint — scan</span></div>
+      <div class="termbar"><i class="r"></i><i class="y"></i><i class="g"></i><span>3am_blueprint — scan</span></div>
       <pre><span class="p">$</span> <span class="c">blueprint --tag Project=checkout --profile prod --all-regions</span>
 <span class="ok">[ok]</span> credentials valid · account 048802587521
 <span class="ok">[ok]</span> 23 resources across 2 regions
@@ -162,14 +375,13 @@
 <span class="warn">[!!]</span> 1 resource open to 0.0.0.0/0 — flagged in orange
 <span class="ok">[ok]</span> diagram ready → <span class="c">http://localhost:8787/view/f3a9…</span> · 6.4s</pre>
     </div>
-    <div class="shot"><img src="/shot.png" alt="Interactive AWS architecture diagram generated by blueprint_" loading="lazy"/></div>
   </div>
 </div></header>
 
 <section id="features"><div class="wrap">
   <div class="kicker">features</div>
   <h2>Not a box-and-line sketch. Your actual topology.</h2>
-  <p class="lead">blueprint_ reads the APIs your architecture already exposes and turns them into
+  <p class="lead">3am_blueprint reads the APIs your architecture already exposes and turns them into
     the diagram you'd draw by hand — if you had a spare afternoon at 3am.</p>
   <div class="grid">
     <div class="feat"><span class="ic">--tag --vpc --account</span><h3>Scan by tag, VPC, or account</h3>
@@ -193,13 +405,13 @@
   </div>
 </div></section>
 
-<section id="how" style="background:var(--bg2)"><div class="wrap">
+<section id="how" class="u-alt"><div class="wrap">
   <div class="kicker">how-it-works</div>
   <h2>Three steps. About ninety seconds.</h2>
   <div class="steps">
     <div class="step"><h3>Create temporary credentials</h3>
       <p>Use <code>aws sts get-session-token</code>, an SSO session, or a read-only IAM user.
-      blueprint_ only ever calls <code>Describe*</code> / <code>List*</code> / <code>Get*</code>.</p></div>
+      3am_blueprint only ever calls <code>Describe*</code> / <code>List*</code> / <code>Get*</code>.</p></div>
     <div class="step"><h3>Pick a scope &amp; regions</h3>
       <p>A tag like <code>Project=checkout</code>, a VPC picked from a live dropdown, or the whole
       account. Sweep every region if you're not sure where things live.</p></div>
@@ -222,10 +434,10 @@
   </div>
 </div></section>
 
-<section id="selfhost" style="background:var(--bg2)"><div class="wrap">
+<section id="selfhost" class="u-alt"><div class="wrap">
   <div class="kicker">self-host</div>
   <h2>Free forever. Yours to run.</h2>
-  <p class="lead">blueprint_ is MIT-licensed and fully open source — every feature, no tiers, no
+  <p class="lead">3am_blueprint is MIT-licensed and fully open source — every feature, no tiers, no
     telemetry, no lock-in.</p>
   <div class="hostgrid">
     <div class="hostcard">
@@ -248,7 +460,7 @@ docker run -p 8787:8787 3am-blueprint
 </div></section>
 
 <footer><div class="wrap">
-  <span class="logo" style="font-size:13px"><span class="name">blueprint</span><span class="by">by <b>3am_</b></span></span>
+  <span class="logo u-logo-sm"><span class="name">3am<span class="cur">_</span>blueprint</span></span>
   <div class="right">
     <a href="https://3am.engineer/" target="_blank" rel="noopener">3am.engineer</a>
     <a href="https://github.com/3am-engineer/blueprint" target="_blank" rel="noopener">github</a>
@@ -257,6 +469,58 @@ docker run -p 8787:8787 3am-blueprint
     <span>icons © AWS</span>
   </div>
 </div></footer>
+
+<script>
+(() => {
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Scroll reveal — classes are added from JS so the page is fully visible without it.
+  if (!reduced && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+
+    document.querySelectorAll('section .wrap').forEach(wrap => {
+      const items = wrap.querySelectorAll('.kicker, h2, .lead, .feat, .step, .sec, .hostcard, .hostnotes');
+      items.forEach((el, i) => {
+        el.classList.add('reveal');
+        el.style.setProperty('--d', Math.min(i * 70, 420) + 'ms');
+        io.observe(el);
+      });
+    });
+  }
+
+  // Terminal playback — reveal output lines one by one with a block cursor.
+  const pre = document.querySelector('.term pre');
+  if (pre && !reduced) {
+    const lines = pre.innerHTML.split('\n').map(h => `<span class="tline">${h}</span>`);
+    pre.innerHTML = lines.join('');
+    const tlines = pre.querySelectorAll('.tline');
+    const cursor = document.createElement('span');
+    cursor.className = 'tcursor';
+    let i = 0;
+    const next = () => {
+      if (i > 0) tlines[i - 1].appendChild(cursor);
+      if (i >= tlines.length) return;
+      const line = tlines[i++];
+      line.classList.add('on');
+      line.appendChild(cursor);
+      // the command line "types" longer; output lines tick out like a real scan
+      setTimeout(next, i === 1 ? 900 : 340 + Math.random() * 240);
+    };
+    setTimeout(next, 1100);  // wait for the hero entrance
+  }
+
+  // Feature-card spotlight follows the cursor.
+  document.querySelectorAll('.feat').forEach(card => {
+    card.addEventListener('pointermove', e => {
+      const r = card.getBoundingClientRect();
+      card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+      card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # The AWS SDK is ~120 of the ~125 production dependencies and releases often,
+  # so those are grouped into a single PR to keep the noise manageable.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      dev:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

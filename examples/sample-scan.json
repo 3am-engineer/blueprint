@@ -42,7 +42,10 @@
       },
       "extra": {
         "instanceType": "t3.medium",
-        "privateIp": "10.0.1.11"
+        "privateIp": "10.0.1.11",
+        "imageId": "ami-0abc111",
+        "amiName": "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-20240101",
+        "os": "ubuntu"
       }
     },
     {
@@ -61,7 +64,10 @@
       },
       "extra": {
         "instanceType": "t3.medium",
-        "privateIp": "10.0.2.11"
+        "privateIp": "10.0.2.11",
+        "imageId": "ami-0abc222",
+        "amiName": "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-20240101",
+        "os": "ubuntu"
       }
     },
     {
@@ -80,7 +86,10 @@
       },
       "extra": {
         "instanceType": "t3.large",
-        "privateIp": "10.0.11.21"
+        "privateIp": "10.0.11.21",
+        "imageId": "ami-0abc333",
+        "amiName": "amzn2-ami-hvm-2.0.20240101-x86_64-gp2",
+        "os": "amazon-linux"
       }
     },
     {
@@ -99,7 +108,11 @@
       },
       "extra": {
         "instanceType": "t3.large",
-        "privateIp": "10.0.12.21"
+        "privateIp": "10.0.12.21",
+        "imageId": "ami-0abc444",
+        "platform": "windows",
+        "amiName": "Windows_Server-2022-English-Full-Base-2024.01.10",
+        "os": "windows"
       }
     },
     {
